@@ -13,6 +13,7 @@
 #include "MipsInstrInfo.h"
 #include "MCTargetDesc/MipsBaseInfo.h"
 #include "MCTargetDesc/MipsMCTargetDesc.h"
+#include "Mips.h"
 #include "MipsSubtarget.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
@@ -571,6 +572,13 @@ unsigned MipsInstrInfo::getEquivalentCompactForm(
   return 0;
 }
 
+bool MipsInstrInfo::SafeAfterMflo(const MachineInstr &MI) const {
+  if (IsDIVMULT(MI.getOpcode()))
+    return false;
+
+  return true;
+}
+
 /// Predicate for distingushing between control transfer instructions and all
 /// other instructions for handling forbidden slots. Consider inline assembly
 /// as unsafe as well.
@@ -619,8 +627,15 @@ bool MipsInstrInfo::SafeInLoadDelaySlot(const MachineInstr &MIInSlot,
     return false;
 
   return !llvm::any_of(LoadMI.defs(), [&](const MachineOperand &Op) {
-    return Op.isReg() && MIInSlot.readsRegister(Op.getReg());
+    return Op.isReg() && MIInSlot.readsRegister(Op.getReg(), /*TRI=*/nullptr);
   });
+}
+
+bool MipsInstrInfo::IsMfloOrMfhi(const MachineInstr &MI) const {
+  if (IsMFLOMFHI(MI.getOpcode()))
+    return true;
+
+  return false;
 }
 
 /// Predicate for distingushing instructions that have forbidden slots.
@@ -699,7 +714,7 @@ MipsInstrInfo::genInstrWithNewOpc(unsigned NewOpc,
   bool BranchWithZeroOperand = false;
   if (I->isBranch() && !I->isPseudo()) {
     auto TRI = I->getParent()->getParent()->getSubtarget().getRegisterInfo();
-    ZeroOperandPosition = I->findRegisterUseOperandIdx(Mips::ZERO, false, TRI);
+    ZeroOperandPosition = I->findRegisterUseOperandIdx(Mips::ZERO, TRI, false);
     BranchWithZeroOperand = ZeroOperandPosition != -1;
   }
 
@@ -930,10 +945,10 @@ MipsInstrInfo::getSerializableDirectMachineOperandTargetFlags() const {
     {MO_CALL_LO16,    "mips-call-lo16"},
     {MO_JALR,         "mips-jalr"}
   };
-  return makeArrayRef(Flags);
+ return ArrayRef(Flags);
 }
 
-Optional<ParamLoadedValue>
+std::optional<ParamLoadedValue>
 MipsInstrInfo::describeLoadedValue(const MachineInstr &MI, Register Reg) const {
   DIExpression *Expr =
       DIExpression::get(MI.getMF()->getFunction().getContext(), {});
@@ -962,8 +977,8 @@ MipsInstrInfo::describeLoadedValue(const MachineInstr &MI, Register Reg) const {
   return TargetInstrInfo::describeLoadedValue(MI, Reg);
 }
 
-Optional<RegImmPair> MipsInstrInfo::isAddImmediate(const MachineInstr &MI,
-                                                   Register Reg) const {
+std::optional<RegImmPair> MipsInstrInfo::isAddImmediate(const MachineInstr &MI,
+                                                        Register Reg) const {
   // TODO: Handle cases where Reg is a super- or sub-register of the
   // destination register.
   const MachineOperand &Op0 = MI.getOperand(0);

@@ -15,9 +15,9 @@
 #include "llvm/Frontend/OpenMP/OMPContext.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
-#include "llvm/ADT/Triple.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Triple.h"
 
 #define DEBUG_TYPE "openmp-ir-builder"
 
@@ -36,6 +36,7 @@ OMPContext::OMPContext(bool IsDeviceCompilation, Triple TargetTriple) {
   case Triple::aarch64:
   case Triple::aarch64_be:
   case Triple::aarch64_32:
+  case Triple::loongarch64:
   case Triple::mips:
   case Triple::mipsel:
   case Triple::mips64:
@@ -44,6 +45,7 @@ OMPContext::OMPContext(bool IsDeviceCompilation, Triple TargetTriple) {
   case Triple::ppcle:
   case Triple::ppc64:
   case Triple::ppc64le:
+  case Triple::systemz:
   case Triple::x86:
   case Triple::x86_64:
     ActiveTraits.set(unsigned(TraitProperty::device_kind_cpu));
@@ -62,7 +64,7 @@ OMPContext::OMPContext(bool IsDeviceCompilation, Triple TargetTriple) {
   if (TraitSelector::TraitSelectorEnum == TraitSelector::device_arch) {        \
     if (TargetTriple.getArch() == TargetTriple.getArchTypeForLLVMName(Str))    \
       ActiveTraits.set(unsigned(TraitProperty::Enum));                         \
-    if (StringRef(Str) == StringRef("x86_64") &&                               \
+    if (StringRef(Str) == "x86_64" &&                                          \
         TargetTriple.getArch() == Triple::x86_64)                              \
       ActiveTraits.set(unsigned(TraitProperty::Enum));                         \
   }
@@ -163,7 +165,7 @@ static int isVariantApplicableInContextHelper(
   // context based on the match kind selected by the user via
   // `implementation={extensions(match_[all,any,none])}'
   auto HandleTrait = [MK](TraitProperty Property,
-                          bool WasFound) -> Optional<bool> /* Result */ {
+                          bool WasFound) -> std::optional<bool> /* Result */ {
     // For kind "any" a single match is enough but we ignore non-matched
     // properties.
     if (MK == MK_ANY) {
@@ -212,9 +214,8 @@ static int isVariantApplicableInContextHelper(
         return Ctx.matchesISATrait(RawString);
       });
 
-    Optional<bool> Result = HandleTrait(Property, IsActiveTrait);
-    if (Result)
-      return Result.value();
+    if (std::optional<bool> Result = HandleTrait(Property, IsActiveTrait))
+      return *Result;
   }
 
   if (!DeviceSetOnly) {
@@ -233,9 +234,8 @@ static int isVariantApplicableInContextHelper(
       if (ConstructMatches)
         ConstructMatches->push_back(ConstructIdx - 1);
 
-      Optional<bool> Result = HandleTrait(Property, FoundInOrder);
-      if (Result)
-        return Result.value();
+      if (std::optional<bool> Result = HandleTrait(Property, FoundInOrder))
+        return *Result;
 
       if (!FoundInOrder) {
         LLVM_DEBUG(dbgs() << "[" << DEBUG_TYPE << "] Construct property "

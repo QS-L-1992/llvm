@@ -1,22 +1,12 @@
-if(${CMAKE_VERSION} VERSION_LESS 3.14)
-    macro(FetchContent_MakeAvailable NAME)
-        FetchContent_GetProperties(${NAME})
-        if(NOT ${NAME}_POPULATED)
-            FetchContent_Populate(${NAME})
-            add_subdirectory(${${NAME}_SOURCE_DIR} ${${NAME}_BINARY_DIR})
-        endif()
-    endmacro()
-endif()
-
 # Lowering of SYCL ESIMD kernels depends on vc-intrinsics
 # NOTE: could have been added earlier from llvm/projects
 if (NOT TARGET LLVMGenXIntrinsics)
   if (NOT DEFINED LLVMGenXIntrinsics_SOURCE_DIR)
     set(LLVMGenXIntrinsics_GIT_REPO https://github.com/intel/vc-intrinsics.git)
-    # Author: Gorban, Igor <igor.gorban@intel.com>
-    # Date:   Thu Nov 24 17:13:40 2022 +0000
-    # Fix build after llvm commit 4b6b248731b81deb471838ff79392993aeb6c621
-    set(LLVMGenXIntrinsics_GIT_TAG 782fbf7301dc73acaa049a4324c976ad94f587f7)
+
+    # Date: Jul 25, 2024
+    # Support MMX removal in LLVM upstream
+    set(LLVMGenXIntrinsics_GIT_TAG 4e51b2467104a257c22788e343dafbdde72e28bb)
 
     message(STATUS "vc-intrinsics repo is missing. Will try to download it from ${LLVMGenXIntrinsics_GIT_REPO}")
     include(FetchContent)
@@ -47,24 +37,44 @@ set_property(GLOBAL PROPERTY LLVMGenXIntrinsics_SOURCE_PROP ${LLVMGenXIntrinsics
 set_property(GLOBAL PROPERTY LLVMGenXIntrinsics_BINARY_PROP ${LLVMGenXIntrinsics_BINARY_DIR})
 
 add_llvm_component_library(LLVMSYCLLowerIR
-  ESIMD/LowerESIMD.cpp
-  ESIMD/LowerESIMDVLoadVStore.cpp
-  ESIMD/LowerESIMDVecArg.cpp
+  ESIMD/ESIMDOptimizeVecArgCallConv.cpp
   ESIMD/ESIMDUtils.cpp
   ESIMD/ESIMDVerifier.cpp
+  ESIMD/ESIMDRemoveHostCode.cpp
+  ESIMD/ESIMDRemoveOptnoneNoinline.cpp
+  ESIMD/LowerESIMD.cpp
   ESIMD/LowerESIMDKernelAttrs.cpp
-  ESIMD/ESIMDOptimizeVecArgCallConv.cpp
+  RecordSYCLAspectNames.cpp
+  CleanupSYCLMetadata.cpp
+  CompileTimePropertiesPass.cpp
+  ComputeModuleRuntimeInfo.cpp
+  DeviceGlobals.cpp
+  ESIMD/LowerESIMDVLoadVStore.cpp
+  ESIMD/LowerESIMDSlmReservation.cpp
+  HostPipes.cpp
   LowerInvokeSimd.cpp
-  LowerKernelProps.cpp
-  LowerWGScope.cpp
   LowerWGLocalMemory.cpp
+  LowerWGScope.cpp
+  ModuleSplitter.cpp
   MutatePrintfAddrspace.cpp
+  SpecConstants.cpp
+  SYCLAddOptLevelAttribute.cpp
+  SYCLConditionalCallOnDevice.cpp
+  SYCLCreateNVVMAnnotations.cpp
+  SYCLDeviceLibReqMask.cpp
+  SYCLDeviceRequirements.cpp
+  SYCLKernelParamOptInfo.cpp
+  SYCLJointMatrixTransform.cpp
   SYCLPropagateAspectsUsage.cpp
+  SYCLPropagateJointMatrixUsage.cpp
+  SYCLVirtualFunctionsAnalysis.cpp
   SYCLUtils.cpp
 
   LocalAccessorToSharedMemory.cpp
   GlobalOffset.cpp
   TargetHelpers.cpp
+
+  SanitizerKernelMetadata.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/SYCLLowerIR
@@ -76,16 +86,22 @@ add_llvm_component_library(LLVMSYCLLowerIR
   LLVMGenXIntrinsics
   LLVMDemangle
   LLVMTransformUtils
+  DeviceConfigFile
 
   LINK_LIBS
   LLVMGenXIntrinsics
   LLVMDemangle
+  LLVMTargetParser
   LLVMTransformUtils
-  
+
   LINK_COMPONENTS
   Analysis
+  BitWriter
   Core
+  Demangle
+  IRPrinter
   Support
+  ipo
   )
 
 target_include_directories(LLVMSYCLLowerIR

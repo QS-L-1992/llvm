@@ -59,7 +59,7 @@ bool isMaskArithmetic(SDValue Op) {
 }
 
 /// \returns the VVP_* SDNode opcode corresponsing to \p OC.
-Optional<unsigned> getVVPOpcode(unsigned Opcode) {
+std::optional<unsigned> getVVPOpcode(unsigned Opcode) {
   switch (Opcode) {
   case ISD::MLOAD:
     return VEISD::VVP_LOAD;
@@ -163,7 +163,7 @@ bool isVVPReductionOp(unsigned Opcode) {
 }
 
 // Return the AVL operand position for this VVP or VEC Op.
-Optional<int> getAVLPos(unsigned Opc) {
+std::optional<int> getAVLPos(unsigned Opc) {
   // This is only available for VP SDNodes
   auto PosOpt = ISD::getVPExplicitVectorLengthIdx(Opc);
   if (PosOpt)
@@ -188,7 +188,7 @@ Optional<int> getAVLPos(unsigned Opc) {
   return std::nullopt;
 }
 
-Optional<int> getMaskPos(unsigned Opc) {
+std::optional<int> getMaskPos(unsigned Opc) {
   // This is only available for VP SDNodes
   auto PosOpt = ISD::getVPMaskIdx(Opc);
   if (PosOpt)
@@ -240,7 +240,7 @@ SDValue getMemoryPtr(SDValue Op) {
   return SDValue();
 }
 
-Optional<EVT> getIdiomaticVectorType(SDNode *Op) {
+std::optional<EVT> getIdiomaticVectorType(SDNode *Op) {
   unsigned OC = Op->getOpcode();
 
   // For memory ops -> the transfered data type
@@ -410,7 +410,7 @@ SDValue VECustomDAG::getConstantMask(Packing Packing, bool AllTrue) const {
   auto MaskVT = getLegalVectorType(Packing, MVT::i1);
 
   // VEISelDAGtoDAG will replace this pattern with the constant-true VM.
-  auto TrueVal = DAG.getConstant(-1, DL, MVT::i32);
+  auto TrueVal = DAG.getAllOnesConstant(DL, MVT::i32);
   auto AVL = getConstant(MaskVT.getVectorNumElements(), MVT::i32);
   auto Res = getNode(VEISD::VEC_BROADCAST, MaskVT, {TrueVal, AVL});
   if (AllTrue)

@@ -4,7 +4,6 @@
 ; RUN: opt -thinlto-bc %s -o %t1.bc
 ; RUN: opt -thinlto-bc %p/Inputs/import-constant.ll -o %t2.bc
 ; RUN: llvm-lto2 run -save-temps %t1.bc %t2.bc -o %t-out \
-; RUN:    -opaque-pointers \
 ; RUN:    -import-constants-with-refs \
 ; RUN:    -r=%t1.bc,main,plx \
 ; RUN:    -r=%t1.bc,_Z6getObjv,l \
@@ -17,7 +16,6 @@
 
 ; Check when importing references is prohibited
 ; RUN: llvm-lto2 run -save-temps %t1.bc %t2.bc -o %t-out-norefs \
-; RUN:    -opaque-pointers \
 ; RUN:    -import-constants-with-refs=false \
 ; RUN:    -r=%t1.bc,main,plx \
 ; RUN:    -r=%t1.bc,_Z6getObjv,l \
@@ -34,11 +32,11 @@
 ; IMPORT-NEXT: @_ZL3Obj.llvm.{{.*}} = available_externally hidden constant %struct.S { i32 4, i32 8, ptr @val }
 ; IMPORT-NEXT: @outer = internal local_unnamed_addr global %struct.Q zeroinitializer
 
-; OPT: @outer = internal unnamed_addr global %struct.Q zeroinitializer
+; @outer is a write-only variable that's stored to once, so the store and the global can be removed.
+; OPT-NOT: @outer
 
-; OPT:      define dso_local i32 @main()
+; OPT:      define dso_local noundef i32 @main()
 ; OPT-NEXT: entry:
-; OPT-NEXT:   store ptr null, ptr getelementptr inbounds (%struct.Q, ptr @outer, i64 1, i32 0)
 ; OPT-NEXT:   ret i32 12
 
 ; NOREFS:      @_ZL3Obj.llvm.{{.*}} = external hidden constant %struct.S

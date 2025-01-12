@@ -64,7 +64,12 @@
 // CHECK-MSAN-NEXT:    [[_MSLD1:%.*]] = load i32, ptr [[TMP11]], align 4, !dbg [[DBG20]]
 // CHECK-MSAN-NEXT:    call void @llvm.lifetime.end.p0(i64 8, ptr nonnull [[P]]), !dbg [[DBG22:![0-9]+]]
 // CHECK-MSAN-NEXT:    call void @llvm.lifetime.end.p0(i64 4, ptr nonnull [[X]]) #[[ATTR2]], !dbg [[DBG22]]
-// CHECK-MSAN-NEXT:    store i32 [[_MSLD1]], ptr @__msan_retval_tls, align 8, !dbg [[DBG23:![0-9]+]]
+// CHECK-MSAN-NEXT:    [[_MSCMP2_NOT:%.*]] = icmp eq i32 [[_MSLD1]], 0, !dbg [[DBG23:![0-9]+]]
+// CHECK-MSAN-NEXT:    br i1 [[_MSCMP2_NOT]], label [[TMP13:%.*]], label [[TMP12:%.*]], !dbg [[DBG23]], !prof [[PROF21]]
+// CHECK-MSAN:       12:
+// CHECK-MSAN-NEXT:    call void @__msan_warning_noreturn() #[[ATTR3]], !dbg [[DBG23]]
+// CHECK-MSAN-NEXT:    unreachable, !dbg [[DBG23]]
+// CHECK-MSAN:       13:
 // CHECK-MSAN-NEXT:    ret i32 [[TMP8]], !dbg [[DBG23]]
 //
 // CHECK-KMSAN-LABEL: @test(
@@ -96,8 +101,8 @@
 // CHECK-KMSAN-NEXT:    call void @__msan_warning(i32 [[TMP9]]) #[[ATTR3:[0-9]+]], !dbg [[DBG20]]
 // CHECK-KMSAN-NEXT:    br label [[TMP10]], !dbg [[DBG20]]
 // CHECK-KMSAN:       10:
-// CHECK-KMSAN-NEXT:    [[RETVAL_ORIGIN:%.*]] = getelementptr { [100 x i64], [100 x i64], [100 x i64], [100 x i64], i64, [200 x i32], i32, i32 }, ptr [[TMP0]], i64 0, i32 6
-// CHECK-KMSAN-NEXT:    [[RETVAL_SHADOW:%.*]] = getelementptr { [100 x i64], [100 x i64], [100 x i64], [100 x i64], i64, [200 x i32], i32, i32 }, ptr [[TMP0]], i64 0, i32 1
+// CHECK-KMSAN-NEXT:    [[RETVAL_ORIGIN:%.*]] = getelementptr i8, ptr [[TMP0]], i64 4008
+// CHECK-KMSAN-NEXT:    [[RETVAL_SHADOW:%.*]] = getelementptr i8, ptr [[TMP0]], i64 800
 // CHECK-KMSAN-NEXT:    [[TMP11:%.*]] = load i32, ptr [[P_0_P_0_P_0_P_0_]], align 4, !dbg [[DBG20]], !tbaa [[TBAA11]]
 // CHECK-KMSAN-NEXT:    [[TMP12:%.*]] = call { ptr, ptr } @__msan_metadata_ptr_for_load_4(ptr nonnull [[P_0_P_0_P_0_P_0_]]) #[[ATTR2]], !dbg [[DBG20]]
 // CHECK-KMSAN-NEXT:    [[TMP13:%.*]] = extractvalue { ptr, ptr } [[TMP12]], 0, !dbg [[DBG20]]

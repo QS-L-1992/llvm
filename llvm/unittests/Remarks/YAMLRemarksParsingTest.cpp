@@ -10,6 +10,7 @@
 #include "llvm/Remarks/Remark.h"
 #include "llvm/Remarks/RemarkParser.h"
 #include "gtest/gtest.h"
+#include <optional>
 
 using namespace llvm;
 
@@ -70,7 +71,7 @@ enum class CmpType {
 
 void parseExpectErrorMeta(
     StringRef Buf, const char *Error, CmpType Cmp,
-    Optional<StringRef> ExternalFilePrependPath = std::nullopt) {
+    std::optional<StringRef> ExternalFilePrependPath = std::nullopt) {
   std::string ErrorStr;
   raw_string_ostream Stream(ErrorStr);
 
@@ -151,6 +152,16 @@ TEST(YAMLRemarks, ParsingGood) {
             "  - Caller: foo\n"
             "    DebugLoc: { File: file.c, Line: 2, Column: 0 }\n"
             "  - String: ' because its definition is unavailable'\n"
+            "Pass: inline\n"
+            "");
+
+  // Block Remark.
+  parseGood("\n"
+            "--- !Missed\n"
+            "Function: foo\n"
+            "Name: NoDefinition\n"
+            "Args:\n"
+            "  - String:           |\n      \n      \n      blocks\n"
             "Pass: inline\n"
             "");
 }

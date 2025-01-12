@@ -6,32 +6,33 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LIBC_SRC_STRING_ALLOCATING_STRING_UTILS_H
-#define LIBC_SRC_STRING_ALLOCATING_STRING_UTILS_H
+#ifndef LLVM_LIBC_SRC_STRING_ALLOCATING_STRING_UTILS_H
+#define LLVM_LIBC_SRC_STRING_ALLOCATING_STRING_UTILS_H
 
-#include "src/__support/CPP/bitset.h"
-#include "src/__support/common.h"
-#include "src/string/memory_utils/bzero_implementations.h"
-#include "src/string/memory_utils/memcpy_implementations.h"
+#include "src/__support/CPP/new.h"
+#include "src/__support/CPP/optional.h"
+#include "src/__support/macros/config.h"
+#include "src/string/memory_utils/inline_memcpy.h"
 #include "src/string/string_utils.h"
-#include <stddef.h> // For size_t
-#include <stdlib.h> // For malloc
 
-namespace __llvm_libc {
+#include <stddef.h> // For size_t
+
+namespace LIBC_NAMESPACE_DECL {
 namespace internal {
 
-inline char *strdup(const char *src) {
+LIBC_INLINE cpp::optional<char *> strdup(const char *src) {
   if (src == nullptr)
-    return nullptr;
+    return cpp::nullopt;
   size_t len = string_length(src) + 1;
-  char *newstr = reinterpret_cast<char *>(::malloc(len));
-  if (newstr == nullptr)
-    return nullptr;
+  AllocChecker ac;
+  char *newstr = new (ac) char[len];
+  if (!ac)
+    return cpp::nullopt;
   inline_memcpy(newstr, src, len);
   return newstr;
 }
 
 } // namespace internal
-} // namespace __llvm_libc
+} // namespace LIBC_NAMESPACE_DECL
 
-#endif
+#endif // LLVM_LIBC_SRC_STRING_ALLOCATING_STRING_UTILS_H

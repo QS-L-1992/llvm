@@ -15,7 +15,6 @@
 #define LLVM_CLANG_LIB_CODEGEN_CGLOOPINFO_H
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/Value.h"
@@ -104,7 +103,7 @@ struct LoopAttributes {
 
   // Value for llvm.loop.parallel_access_indices metadata, for the arrays that
   // weren't put into a specific ivdep item.
-  llvm::Optional<SYCLIVDepInfo> GlobalSYCLIVDepInfo;
+  std::optional<SYCLIVDepInfo> GlobalSYCLIVDepInfo;
   // Value for llvm.loop.parallel_access_indices metadata, for array
   // specifications.
   llvm::SmallVector<SYCLIVDepInfo, 4> ArraySYCLIVDepInfo;
@@ -113,7 +112,7 @@ struct LoopAttributes {
   unsigned SYCLIInterval;
 
   /// Value for llvm.loop.max_concurrency.count metadata.
-  llvm::Optional<unsigned> SYCLMaxConcurrencyNThreads;
+  std::optional<unsigned> SYCLMaxConcurrencyNThreads;
 
   /// Value for count variant (min/max/avg) and count metadata.
   llvm::SmallVector<std::pair<const char *, unsigned int>, 2>
@@ -129,13 +128,16 @@ struct LoopAttributes {
   bool SYCLLoopPipeliningDisable;
 
   /// Value for llvm.loop.max_interleaving.count metadata.
-  llvm::Optional<unsigned> SYCLMaxInterleavingNInvocations;
+  std::optional<unsigned> SYCLMaxInterleavingNInvocations;
 
   /// Value for llvm.loop.intel.speculated.iterations.count metadata.
-  llvm::Optional<unsigned> SYCLSpeculatedIterationsNIterations;
+  std::optional<unsigned> SYCLSpeculatedIterationsNIterations;
 
   // Value for llvm.loop.intel.max_reinvocation_delay metadata.
-  llvm::Optional<unsigned> SYCLMaxReinvocationDelayNCycles;
+  std::optional<unsigned> SYCLMaxReinvocationDelayNCycles;
+
+  /// Flag for llvm.loop.intel.pipelining.enable, i32 1 metadata.
+  bool SYCLLoopPipeliningEnable;
 
   /// llvm.unroll.
   unsigned UnrollCount;
@@ -154,6 +156,9 @@ struct LoopAttributes {
 
   /// Flag for llvm.loop.fusion.disable metatdata.
   bool SYCLNofusionEnable;
+
+  /// Value for 'llvm.loop.align' metadata.
+  unsigned CodeAlign;
 
   /// Value for whether the loop is required to make progress.
   bool MustProgress;
@@ -185,6 +190,10 @@ public:
   /// Create the loop's metadata. Must be called after its nested loops have
   /// been processed.
   void finish();
+
+  /// Returns the first outer loop containing this loop if any, nullptr
+  /// otherwise.
+  const LoopInfo *getParent() const { return Parent; }
 
 private:
   /// Loop ID metadata.
@@ -410,6 +419,9 @@ public:
   /// Set flag of nofusion for the next loop pushed.
   void setSYCLNofusionEnable() { StagedAttrs.SYCLNofusionEnable = true; }
 
+  /// Set value of code align for the next loop pushed.
+  void setCodeAlign(unsigned C) { StagedAttrs.CodeAlign = C; }
+
   /// Set no progress for the next loop pushed.
   void setMustProgress(bool P) { StagedAttrs.MustProgress = P; }
 
@@ -418,12 +430,18 @@ public:
     StagedAttrs.SYCLMaxReinvocationDelayNCycles = C;
   }
 
-private:
+  /// Set flag of enable_loop_pipelining for the next loop pushed.
+  void setSYCLLoopPipeliningEnable() {
+    StagedAttrs.SYCLLoopPipeliningEnable = true;
+  }
+
   /// Returns true if there is LoopInfo on the stack.
   bool hasInfo() const { return !Active.empty(); }
   /// Return the LoopInfo for the current loop. HasInfo should be called
   /// first to ensure LoopInfo is present.
   const LoopInfo &getInfo() const { return *Active.back(); }
+
+private:
   /// The set of attributes that will be applied to the next pushed loop.
   LoopAttributes StagedAttrs;
   /// Stack of active loops.

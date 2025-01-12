@@ -7,17 +7,22 @@ set(LLVM_LINK_COMPONENTS
 
 add_mlir_tool(mlir-cpu-runner
   mlir-cpu-runner.cpp
+
+  EXPORT_SYMBOLS
   )
 llvm_update_compile_flags(mlir-cpu-runner)
-target_link_libraries(mlir-cpu-runner PRIVATE
+mlir_target_link_libraries(mlir-cpu-runner PRIVATE
   MLIRAnalysis
-  MLIRExecutionEngine
+  MLIRBuiltinToLLVMIRTranslation
   MLIRIR
-  MLIRJitRunner
   MLIRLLVMDialect
   MLIRLLVMToLLVMIRTranslation
   MLIRToLLVMIRTranslationRegistration
   MLIRParser
   MLIRTargetLLVMIRExport
   MLIRSupport
+  )
+target_link_libraries(mlir-cpu-runner PRIVATE
+  MLIRExecutionEngine
+  MLIRJitRunner
   )

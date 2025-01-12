@@ -15,21 +15,14 @@
 #   define TARGET_BUILTIN(ID, TYPE, ATTRS, FEATURE) BUILTIN(ID, TYPE, ATTRS)
 #endif
 
-// TODO: Support more builtins.
-// TODO: Added feature constraints.
-TARGET_BUILTIN(__builtin_loongarch_dbar, "vIUi", "nc", "")
-TARGET_BUILTIN(__builtin_loongarch_ibar, "vIUi", "nc", "")
-TARGET_BUILTIN(__builtin_loongarch_break, "vIUi", "nc", "")
-TARGET_BUILTIN(__builtin_loongarch_syscall, "vIUi", "nc", "")
+// Definition of LoongArch basic builtins.
+#include "clang/Basic/BuiltinsLoongArchBase.def"
 
-TARGET_BUILTIN(__builtin_loongarch_crc_w_b_w, "iii", "nc", "64bit")
-TARGET_BUILTIN(__builtin_loongarch_crc_w_h_w, "iii", "nc", "64bit")
-TARGET_BUILTIN(__builtin_loongarch_crc_w_w_w, "iii", "nc", "64bit")
-TARGET_BUILTIN(__builtin_loongarch_crc_w_d_w, "iLii", "nc", "64bit")
-TARGET_BUILTIN(__builtin_loongarch_crcc_w_b_w, "iii", "nc", "64bit")
-TARGET_BUILTIN(__builtin_loongarch_crcc_w_h_w, "iii", "nc", "64bit")
-TARGET_BUILTIN(__builtin_loongarch_crcc_w_w_w, "iii", "nc", "64bit")
-TARGET_BUILTIN(__builtin_loongarch_crcc_w_d_w, "iLii", "nc", "64bit")
+// Definition of LSX builtins.
+#include "clang/Basic/BuiltinsLoongArchLSX.def"
+
+// Definition of LASX builtins.
+#include "clang/Basic/BuiltinsLoongArchLASX.def"
 
 #undef BUILTIN
 #undef TARGET_BUILTIN

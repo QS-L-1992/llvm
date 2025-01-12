@@ -85,8 +85,8 @@ int main() {
 // CHECK-NEXT: VarDecl {{.*}} cinit
 // CHECK-NEXT: InitListExpr
 // CHECK-NEXT: InitListExpr {{.*}} 'MyStruct'
-// CHECK-NEXT: CXXConstructExpr {{.*}} 'union MyUnion':'MyStruct::MyUnion' 'void (const MyStruct::MyUnion &) noexcept'
-// CHECK-NEXT: ImplicitCastExpr {{.*}} 'const MyStruct::MyUnion'
+// CHECK-NEXT: CXXConstructExpr {{.*}} 'union MyUnion':'MyStruct::MyUnion' 'void (const MyUnion &) noexcept'
+// CHECK-NEXT: ImplicitCastExpr {{.*}} 'const MyUnion':'const MyStruct::MyUnion'
 // CHECK-NEXT: DeclRefExpr {{.*}} 'union MyUnion':'MyStruct::MyUnion' lvalue ParmVar {{.*}} '_arg_union_mem' 'union MyUnion':'MyStruct::MyUnion'
 // CHECK-NEXT: CXXConstructExpr {{.*}} 'sycl::accessor<char, 1, sycl::access::mode::read>'
 

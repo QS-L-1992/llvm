@@ -37,12 +37,48 @@ func.func @any_attr_of_fail() {
 
 func.func @float_attrs_pass() {
   "test.float_attrs"() {
+    // CHECK: float_attr = 2.000000e+00 : f4E2M1FN
+    float_attr = 2. : f4E2M1FN
+  } : () -> ()
+  "test.float_attrs"() {
+    // CHECK: float_attr = 2.000000e+00 : f6E2M3FN
+    float_attr = 2. : f6E2M3FN
+  } : () -> ()
+  "test.float_attrs"() {
+    // CHECK: float_attr = 2.000000e+00 : f6E3M2FN
+    float_attr = 2. : f6E3M2FN
+  } : () -> ()
+  "test.float_attrs"() {
     // CHECK: float_attr = 2.000000e+00 : f8E5M2
     float_attr = 2. : f8E5M2
   } : () -> ()
   "test.float_attrs"() {
+    // CHECK: float_attr = 2.000000e+00 : f8E4M3
+    float_attr = 2. : f8E4M3
+  } : () -> ()
+  "test.float_attrs"() {
     // CHECK: float_attr = 2.000000e+00 : f8E4M3FN
     float_attr = 2. : f8E4M3FN
+  } : () -> ()
+  "test.float_attrs"() {
+    // CHECK: float_attr = 2.000000e+00 : f8E5M2FNUZ
+    float_attr = 2. : f8E5M2FNUZ
+  } : () -> ()
+  "test.float_attrs"() {
+    // CHECK: float_attr = 2.000000e+00 : f8E4M3FNUZ
+    float_attr = 2. : f8E4M3FNUZ
+  } : () -> ()
+  "test.float_attrs"() {
+    // CHECK: float_attr = 2.000000e+00 : f8E4M3B11FNUZ
+    float_attr = 2. : f8E4M3B11FNUZ
+  } : () -> ()
+  "test.float_attrs"() {
+    // CHECK: float_attr = 2.000000e+00 : f8E3M4
+    float_attr = 2. : f8E3M4
+  } : () -> ()
+  "test.float_attrs"() {
+    // CHECK: float_attr = 2.000000e+00 : f8E8M0FNU
+    float_attr = 2. : f8E8M0FNU
   } : () -> ()
   "test.float_attrs"() {
     // CHECK: float_attr = 2.000000e+00 : f16
@@ -51,6 +87,10 @@ func.func @float_attrs_pass() {
   "test.float_attrs"() {
     // CHECK: float_attr = 2.000000e+00 : bf16
     float_attr = 2. : bf16
+  } : () -> ()
+  "test.float_attrs"() {
+    // CHECK: float_attr = 2.000000e+00 : tf32
+    float_attr = 2. : tf32
   } : () -> ()
   "test.float_attrs"() {
     // CHECK: float_attr = 2.000000e+00 : f32
@@ -521,6 +561,14 @@ func.func @correct_type_pass() {
 
 // -----
 
+func.func @tf32_elements_attr() {
+  // CHECK: "foo"() {attr = dense<4.000000e+00> : tensor<tf32>} : () -> ()
+  "foo"() {attr = dense<4.0> : tensor<tf32>} : () -> ()
+  return
+}
+
+// -----
+
 //===----------------------------------------------------------------------===//
 // Test StringElementsAttr
 //===----------------------------------------------------------------------===//
@@ -630,8 +678,14 @@ func.func @dense_array_attr() attributes {
     x7_f16 = array<f16: 1., 3.>
   }: () -> ()
 
-  // CHECK: test.typed_attr tensor<4xi32> = array<1, 2, 3, 4>
-  test.typed_attr tensor<4xi32> = array<1, 2, 3, 4>
+  return
+}
+
+// -----
+
+func.func @test_invalid_bitwidth_type() {
+  // expected-error @below{{element type bitwidth must be a multiple of 8}}
+  "foo"() {tf32attr = array<tf32: 1024.0>} : () -> ()
   return
 }
 
@@ -868,4 +922,12 @@ func.func @default_value_printing(%arg0 : i32) {
   // CHECK: test.default_value_print {value_with_default = 1 : i32} %arg0
   "test.default_value_print"(%arg0) {"value_with_default" = 1 : i32} : (i32) -> ()
   return
+}
+
+// -----
+
+func.func @type_attr_of_fail() {
+    // expected-error @below {{failed to satisfy constraint: type attribute of 64-bit signless integer}}
+    test.type_attr_of i32
+    return
 }

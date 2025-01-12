@@ -10,8 +10,6 @@
 //
 //===----------------------------------------------------------------------===//
 #include "ARMBaseInfo.h"
-#include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/SmallVector.h"
 
 using namespace llvm;
 namespace llvm {
@@ -19,8 +17,7 @@ ARM::PredBlockMask expandPredBlockMask(ARM::PredBlockMask BlockMask,
                                        ARMVCC::VPTCodes Kind) {
   using PredBlockMask = ARM::PredBlockMask;
   assert(Kind != ARMVCC::None && "Cannot expand a mask with None!");
-  assert(countTrailingZeros((unsigned)BlockMask) != 0 &&
-         "Mask is already full");
+  assert(llvm::countr_zero((unsigned)BlockMask) != 0 && "Mask is already full");
 
   auto ChooseMask = [&](PredBlockMask AddedThen, PredBlockMask AddedElse) {
     return Kind == ARMVCC::Then ? AddedThen : AddedElse;

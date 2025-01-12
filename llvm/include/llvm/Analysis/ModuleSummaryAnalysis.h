@@ -13,7 +13,6 @@
 #ifndef LLVM_ANALYSIS_MODULESUMMARYANALYSIS_H
 #define LLVM_ANALYSIS_MODULESUMMARYANALYSIS_H
 
-#include "llvm/ADT/Optional.h"
 #include "llvm/IR/ModuleSummaryIndex.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Pass.h"
@@ -99,6 +98,10 @@ public:
 //
 ImmutablePass *
 createImmutableModuleSummaryIndexWrapperPass(const ModuleSummaryIndex *Index);
+
+/// Returns true if the instruction could have memprof metadata, used to ensure
+/// consistency between summary analysis and the ThinLTO backend processing.
+bool mayHaveMemprofSummary(const CallBase *CB);
 
 } // end namespace llvm
 

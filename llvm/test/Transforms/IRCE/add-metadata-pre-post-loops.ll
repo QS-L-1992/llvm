@@ -1,4 +1,4 @@
-; RUN: opt -irce -S < %s 2>&1 | FileCheck %s
+; RUN: opt -passes=irce -S < %s 2>&1 | FileCheck %s
 ; RUN: opt -passes='require<branch-prob>,irce' -S < %s 2>&1 | FileCheck %s
 
 ; test that the pre and post loops have loop metadata which disables any further
@@ -9,7 +9,7 @@
 define void @inner_loop(ptr %arr, ptr %a_len_ptr, i32 %n) #0 {
 ; CHECK-LABEL: inner_loop(
 ; CHECK-LABEL: in.bounds.postloop
-; CHECK: br i1 %next.postloop, label %loop.postloop, label %exit.loopexit.loopexit, !llvm.loop !2, !irce.loop.clone !7
+; CHECK: br i1 %next.postloop, label %loop.postloop, label %exit.loopexit.loopexit, !llvm.loop !2, !loop_constrainer.loop.clone !7
 
 entry:
   %len = load i32, ptr %a_len_ptr, !range !0
@@ -39,9 +39,9 @@ exit:                                             ; preds = %in.bounds, %entry
 define void @single_access_with_preloop(ptr %arr, ptr %a_len_ptr, i32 %n, i32 %offset) {
 ; CHECK-LABEL: @single_access_with_preloop(
 ; CHECK-LABEL: in.bounds.preloop
-; CHECK: br i1 [[COND:%[^ ]+]], label %loop.preloop, label %preloop.exit.selector, !llvm.loop !8, !irce.loop.clone !7
+; CHECK: br i1 [[COND:%[^ ]+]], label %loop.preloop, label %preloop.exit.selector, !llvm.loop !8, !loop_constrainer.loop.clone !7
 ; CHECK-LABEL: in.bounds.postloop
-; CHECK: br i1 %next.postloop, label %loop.postloop, label %exit.loopexit.loopexit, !llvm.loop !9, !irce.loop.clone !7
+; CHECK: br i1 %next.postloop, label %loop.postloop, label %exit.loopexit.loopexit, !llvm.loop !9, !loop_constrainer.loop.clone !7
  entry:
   %len = load i32, ptr %a_len_ptr, !range !0
   %first.itr.check = icmp sgt i32 %n, 0

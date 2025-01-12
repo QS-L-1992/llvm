@@ -31,6 +31,7 @@
 #include "llvm/Passes/StandardInstrumentations.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/ToolOutputFile.h"
+#include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/IPO/ThinLTOBitcodeWriter.h"
@@ -175,6 +176,9 @@ static cl::opt<PGOKind>
                                       "Use sampled profile to guide PGO.")));
 static cl::opt<std::string> ProfileFile("profile-file",
                                  cl::desc("Path to the profile."), cl::Hidden);
+static cl::opt<std::string>
+    MemoryProfileFile("memory-profile-file",
+                      cl::desc("Path to the memory profile."), cl::Hidden);
 
 static cl::opt<CSPGOKind> CSPGOKindFlag(
     "cspgo-kind", cl::init(NoCSPGO), cl::Hidden,
@@ -198,6 +202,19 @@ static cl::opt<std::string>
                          cl::desc("Path to the profile remapping file."),
                          cl::Hidden);
 
+static cl::opt<PGOOptions::ColdFuncOpt> PGOColdFuncAttr(
+    "pgo-cold-func-opt", cl::init(PGOOptions::ColdFuncOpt::Default), cl::Hidden,
+    cl::desc(
+        "Function attribute to apply to cold functions as determined by PGO"),
+    cl::values(clEnumValN(PGOOptions::ColdFuncOpt::Default, "default",
+                          "Default (no attribute)"),
+               clEnumValN(PGOOptions::ColdFuncOpt::OptSize, "optsize",
+                          "Mark cold functions with optsize."),
+               clEnumValN(PGOOptions::ColdFuncOpt::MinSize, "minsize",
+                          "Mark cold functions with minsize."),
+               clEnumValN(PGOOptions::ColdFuncOpt::OptNone, "optnone",
+                          "Mark cold functions with optnone.")));
+
 static cl::opt<bool> DebugInfoForProfiling(
     "debug-info-for-profiling", cl::init(false), cl::Hidden,
     cl::desc("Emit special debug info to enable PGO profile generation."));
@@ -209,10 +226,6 @@ static cl::opt<bool> PseudoProbeForProfiling(
 static cl::opt<bool> DisableLoopUnrolling(
     "disable-loop-unrolling",
     cl::desc("Disable loop unrolling in all relevant passes"), cl::init(false));
-
-namespace llvm {
-extern cl::opt<bool> PrintPipelinePasses;
-} // namespace llvm
 
 template <typename PassManagerT>
 bool tryParsePipelineText(PassBuilder &PB,
@@ -281,19 +294,19 @@ static void registerEPCallbacks(PassBuilder &PB) {
   if (tryParsePipelineText<ModulePassManager>(
           PB, PipelineEarlySimplificationEPPipeline))
     PB.registerPipelineEarlySimplificationEPCallback(
-        [&PB](ModulePassManager &PM, OptimizationLevel) {
+        [&PB](ModulePassManager &PM, OptimizationLevel, ThinOrFullLTOPhase) {
           ExitOnError Err("Unable to parse EarlySimplification pipeline: ");
           Err(PB.parsePassPipeline(PM, PipelineEarlySimplificationEPPipeline));
         });
   if (tryParsePipelineText<ModulePassManager>(PB, OptimizerEarlyEPPipeline))
     PB.registerOptimizerEarlyEPCallback(
-        [&PB](ModulePassManager &PM, OptimizationLevel) {
+        [&PB](ModulePassManager &PM, OptimizationLevel, ThinOrFullLTOPhase) {
           ExitOnError Err("Unable to parse OptimizerEarlyEP pipeline: ");
           Err(PB.parsePassPipeline(PM, OptimizerEarlyEPPipeline));
         });
   if (tryParsePipelineText<ModulePassManager>(PB, OptimizerLastEPPipeline))
     PB.registerOptimizerLastEPCallback(
-        [&PB](ModulePassManager &PM, OptimizationLevel) {
+        [&PB](ModulePassManager &PM, OptimizationLevel, ThinOrFullLTOPhase) {
           ExitOnError Err("Unable to parse OptimizerLastEP pipeline: ");
           Err(PB.parsePassPipeline(PM, OptimizerLastEPPipeline));
         });
@@ -320,54 +333,65 @@ static void registerEPCallbacks(PassBuilder &PB) {
   llvm::PassPluginLibraryInfo get##Ext##PluginInfo();
 #include "llvm/Support/Extension.def"
 
-bool llvm::runPassPipeline(StringRef Arg0, Module &M, TargetMachine *TM,
-                           TargetLibraryInfoImpl *TLII, ToolOutputFile *Out,
-                           ToolOutputFile *ThinLTOLinkOut,
-                           ToolOutputFile *OptRemarkFile,
-                           StringRef PassPipeline, ArrayRef<StringRef> Passes,
-                           ArrayRef<PassPlugin> PassPlugins,
-                           OutputKind OK, VerifierKind VK,
-                           bool ShouldPreserveAssemblyUseListOrder,
-                           bool ShouldPreserveBitcodeUseListOrder,
-                           bool EmitSummaryIndex, bool EmitModuleHash,
-                           bool EnableDebugify, bool VerifyDIPreserve) {
-  bool VerifyEachPass = VK == VK_VerifyEachPass;
-
-  Optional<PGOOptions> P;
+bool llvm::runPassPipeline(
+    StringRef Arg0, Module &M, TargetMachine *TM, TargetLibraryInfoImpl *TLII,
+    ToolOutputFile *Out, ToolOutputFile *ThinLTOLinkOut,
+    ToolOutputFile *OptRemarkFile, StringRef PassPipeline,
+    ArrayRef<PassPlugin> PassPlugins,
+    ArrayRef<std::function<void(llvm::PassBuilder &)>> PassBuilderCallbacks,
+    OutputKind OK, VerifierKind VK, bool ShouldPreserveAssemblyUseListOrder,
+    bool ShouldPreserveBitcodeUseListOrder, bool EmitSummaryIndex,
+    bool EmitModuleHash, bool EnableDebugify, bool VerifyDIPreserve,
+    bool UnifiedLTO) {
+  auto FS = vfs::getRealFileSystem();
+  std::optional<PGOOptions> P;
   switch (PGOKindFlag) {
   case InstrGen:
-    P = PGOOptions(ProfileFile, "", "", PGOOptions::IRInstr);
+    P = PGOOptions(ProfileFile, "", "", MemoryProfileFile, FS,
+                   PGOOptions::IRInstr, PGOOptions::NoCSAction,
+                   PGOColdFuncAttr);
     break;
   case InstrUse:
-    P = PGOOptions(ProfileFile, "", ProfileRemappingFile, PGOOptions::IRUse);
+    P = PGOOptions(ProfileFile, "", ProfileRemappingFile, MemoryProfileFile, FS,
+                   PGOOptions::IRUse, PGOOptions::NoCSAction, PGOColdFuncAttr);
     break;
   case SampleUse:
-    P = PGOOptions(ProfileFile, "", ProfileRemappingFile,
-                   PGOOptions::SampleUse);
+    P = PGOOptions(ProfileFile, "", ProfileRemappingFile, MemoryProfileFile, FS,
+                   PGOOptions::SampleUse, PGOOptions::NoCSAction,
+                   PGOColdFuncAttr);
     break;
   case NoPGO:
-    if (DebugInfoForProfiling || PseudoProbeForProfiling)
-      P = PGOOptions("", "", "", PGOOptions::NoAction, PGOOptions::NoCSAction,
+    if (DebugInfoForProfiling || PseudoProbeForProfiling ||
+        !MemoryProfileFile.empty())
+      P = PGOOptions("", "", "", MemoryProfileFile, FS, PGOOptions::NoAction,
+                     PGOOptions::NoCSAction, PGOColdFuncAttr,
                      DebugInfoForProfiling, PseudoProbeForProfiling);
     else
       P = std::nullopt;
   }
   if (CSPGOKindFlag != NoCSPGO) {
     if (P && (P->Action == PGOOptions::IRInstr ||
-              P->Action == PGOOptions::SampleUse))
+              P->Action == PGOOptions::SampleUse)) {
       errs() << "CSPGOKind cannot be used with IRInstr or SampleUse";
+      return false;
+    }
     if (CSPGOKindFlag == CSInstrGen) {
-      if (CSProfileGenFile.empty())
+      if (CSProfileGenFile.empty()) {
         errs() << "CSInstrGen needs to specify CSProfileGenFile";
+        return false;
+      }
       if (P) {
         P->CSAction = PGOOptions::CSIRInstr;
         P->CSProfileGenFile = CSProfileGenFile;
       } else
         P = PGOOptions("", CSProfileGenFile, ProfileRemappingFile,
-                       PGOOptions::NoAction, PGOOptions::CSIRInstr);
+                       /*MemoryProfile=*/"", FS, PGOOptions::NoAction,
+                       PGOOptions::CSIRInstr);
     } else /* CSPGOKindFlag == CSInstrUse */ {
-      if (!P)
+      if (!P) {
         errs() << "CSInstrUse needs to be together with InstrUse";
+        return false;
+      }
       P->CSAction = PGOOptions::CSIRUse;
     }
   }
@@ -384,21 +408,21 @@ bool llvm::runPassPipeline(StringRef Arg0, Module &M, TargetMachine *TM,
   PrintPassOpts.Verbose = DebugPM == DebugLogging::Verbose;
   PrintPassOpts.SkipAnalyses = DebugPM == DebugLogging::Quiet;
   StandardInstrumentations SI(M.getContext(), DebugPM != DebugLogging::None,
-                              VerifyEachPass, PrintPassOpts);
-  SI.registerCallbacks(PIC, &FAM);
+                              VK == VerifierKind::EachPass, PrintPassOpts);
+  SI.registerCallbacks(PIC, &MAM);
   DebugifyEachInstrumentation Debugify;
   DebugifyStatsMap DIStatsMap;
   DebugInfoPerPass DebugInfoBeforePass;
   if (DebugifyEach) {
     Debugify.setDIStatsMap(DIStatsMap);
     Debugify.setDebugifyMode(DebugifyMode::SyntheticDebugInfo);
-    Debugify.registerCallbacks(PIC);
+    Debugify.registerCallbacks(PIC, MAM);
   } else if (VerifyEachDebugInfoPreserve) {
     Debugify.setDebugInfoBeforePass(DebugInfoBeforePass);
     Debugify.setDebugifyMode(DebugifyMode::OriginalDebugInfo);
     Debugify.setOrigDIVerifyBugsReportFilePath(
       VerifyDIPreserveExport);
-    Debugify.registerCallbacks(PIC);
+    Debugify.registerCallbacks(PIC, MAM);
   }
 
   PipelineTuningOptions PTO;
@@ -406,12 +430,17 @@ bool llvm::runPassPipeline(StringRef Arg0, Module &M, TargetMachine *TM,
   // to false above so we shouldn't necessarily need to check whether or not the
   // option has been enabled.
   PTO.LoopUnrolling = !DisableLoopUnrolling;
+  PTO.UnifiedLTO = UnifiedLTO;
   PassBuilder PB(TM, PTO, P, &PIC);
   registerEPCallbacks(PB);
 
   // For any loaded plugins, let them register pass builder callbacks.
   for (auto &PassPlugin : PassPlugins)
     PassPlugin.registerPassBuilderCallbacks(PB);
+
+  // Load any explicitly specified plugins.
+  for (auto &PassCallback : PassBuilderCallbacks)
+    PassCallback(PB);
 
 #define HANDLE_EXTENSION(Ext)                                                  \
   get##Ext##PluginInfo().RegisterPassBuilderCallbacks(PB);
@@ -438,8 +467,6 @@ bool llvm::runPassPipeline(StringRef Arg0, Module &M, TargetMachine *TM,
   PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
   ModulePassManager MPM;
-  if (VK > VK_NoVerifier)
-    MPM.addPass(VerifierPass());
   if (EnableDebugify)
     MPM.addPass(NewPMDebugifyPass());
   if (VerifyDIPreserve)
@@ -448,25 +475,13 @@ bool llvm::runPassPipeline(StringRef Arg0, Module &M, TargetMachine *TM,
 
   // Add passes according to the -passes options.
   if (!PassPipeline.empty()) {
-    assert(Passes.empty() &&
-           "PassPipeline and Passes should not both contain passes");
     if (auto Err = PB.parsePassPipeline(MPM, PassPipeline)) {
       errs() << Arg0 << ": " << toString(std::move(Err)) << "\n";
       return false;
     }
   }
-  // Add passes specified using the legacy PM syntax (i.e. not using
-  // -passes). This should be removed later when such support has been
-  // deprecated, i.e. when all lit tests running opt (and not using
-  // -enable-new-pm=0) have been updated to use -passes.
-  for (auto PassName : Passes) {
-    if (auto Err = PB.parsePassPipeline(MPM, PassName)) {
-      errs() << Arg0 << ": " << toString(std::move(Err)) << "\n";
-      return false;
-    }
-  }
 
-  if (VK > VK_NoVerifier)
+  if (VK != VerifierKind::None)
     MPM.addPass(VerifierPass());
   if (EnableDebugify)
     MPM.addPass(NewPMCheckDebugifyPass(false, "", &DIStatsMap));

@@ -13,13 +13,11 @@
 #ifndef LLVM_ANALYSIS_BASICALIASANALYSIS_H
 #define LLVM_ANALYSIS_BASICALIASANALYSIS_H
 
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Pass.h"
 #include <memory>
-#include <optional>
 #include <utility>
 
 namespace llvm {
@@ -32,7 +30,6 @@ class GEPOperator;
 class PHINode;
 class SelectInst;
 class TargetLibraryInfo;
-class PhiValues;
 class Value;
 
 /// This is the AA result object for the basic, local, and stateless alias
@@ -46,28 +43,33 @@ class BasicAAResult : public AAResultBase {
   const Function &F;
   const TargetLibraryInfo &TLI;
   AssumptionCache &AC;
-  DominatorTree *DT;
-  PhiValues *PV;
+  /// Use getDT() instead of accessing this member directly, in order to
+  /// respect the AAQI.UseDominatorTree option.
+  DominatorTree *DT_;
+
+  DominatorTree *getDT(const AAQueryInfo &AAQI) const {
+    return AAQI.UseDominatorTree ? DT_ : nullptr;
+  }
 
 public:
   BasicAAResult(const DataLayout &DL, const Function &F,
                 const TargetLibraryInfo &TLI, AssumptionCache &AC,
-                DominatorTree *DT = nullptr, PhiValues *PV = nullptr)
-      : DL(DL), F(F), TLI(TLI), AC(AC), DT(DT), PV(PV) {}
+                DominatorTree *DT = nullptr)
+      : DL(DL), F(F), TLI(TLI), AC(AC), DT_(DT) {}
 
   BasicAAResult(const BasicAAResult &Arg)
       : AAResultBase(Arg), DL(Arg.DL), F(Arg.F), TLI(Arg.TLI), AC(Arg.AC),
-        DT(Arg.DT), PV(Arg.PV) {}
+        DT_(Arg.DT_) {}
   BasicAAResult(BasicAAResult &&Arg)
       : AAResultBase(std::move(Arg)), DL(Arg.DL), F(Arg.F), TLI(Arg.TLI),
-        AC(Arg.AC), DT(Arg.DT), PV(Arg.PV) {}
+        AC(Arg.AC), DT_(Arg.DT_) {}
 
   /// Handle invalidation events in the new pass manager.
   bool invalidate(Function &Fn, const PreservedAnalyses &PA,
                   FunctionAnalysisManager::Invalidator &Inv);
 
   AliasResult alias(const MemoryLocation &LocA, const MemoryLocation &LocB,
-                    AAQueryInfo &AAQI);
+                    AAQueryInfo &AAQI, const Instruction *CtxI);
 
   ModRefInfo getModRefInfo(const CallBase *Call, const MemoryLocation &Loc,
                            AAQueryInfo &AAQI);
@@ -136,9 +138,9 @@ private:
                           const Value *V2, LocationSize V2Size,
                           AAQueryInfo &AAQI);
 
-  AliasResult aliasCheck(const Value *V1, LocationSize V1Size,
-                         const Value *V2, LocationSize V2Size,
-                         AAQueryInfo &AAQI);
+  AliasResult aliasCheck(const Value *V1, LocationSize V1Size, const Value *V2,
+                         LocationSize V2Size, AAQueryInfo &AAQI,
+                         const Instruction *CtxI);
 
   AliasResult aliasCheckRecursive(const Value *V1, LocationSize V1Size,
                                   const Value *V2, LocationSize V2Size,
@@ -177,28 +179,6 @@ public:
 };
 
 FunctionPass *createBasicAAWrapperPass();
-
-/// A helper for the legacy pass manager to create a \c BasicAAResult object
-/// populated to the best of our ability for a particular function when inside
-/// of a \c ModulePass or a \c CallGraphSCCPass.
-BasicAAResult createLegacyPMBasicAAResult(Pass &P, Function &F);
-
-/// This class is a functor to be used in legacy module or SCC passes for
-/// computing AA results for a function. We store the results in fields so that
-/// they live long enough to be queried, but we re-use them each time.
-class LegacyAARGetter {
-  Pass &P;
-  std::optional<BasicAAResult> BAR;
-  std::optional<AAResults> AAR;
-
-public:
-  LegacyAARGetter(Pass &P) : P(P) {}
-  AAResults &operator()(Function &F) {
-    BAR.emplace(createLegacyPMBasicAAResult(P, F));
-    AAR.emplace(createLegacyPMAAResults(P, F, *BAR));
-    return *AAR;
-  }
-};
 
 } // end namespace llvm
 

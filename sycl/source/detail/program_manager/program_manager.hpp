@@ -7,22 +7,28 @@
 //===----------------------------------------------------------------------===//
 
 #pragma once
+#include <detail/cg.hpp>
 #include <detail/device_binary_image.hpp>
 #include <detail/device_global_map_entry.hpp>
+#include <detail/host_pipe_map_entry.hpp>
+#include <detail/kernel_arg_mask.hpp>
 #include <detail/spec_constant_impl.hpp>
+#include <sycl/detail/cg_types.hpp>
 #include <sycl/detail/common.hpp>
+#include <sycl/detail/device_global_map.hpp>
 #include <sycl/detail/export.hpp>
+#include <sycl/detail/host_pipe_map.hpp>
 #include <sycl/detail/os_util.hpp>
-#include <sycl/detail/pi.hpp>
+#include <sycl/detail/ur.hpp>
 #include <sycl/detail/util.hpp>
 #include <sycl/device.hpp>
 #include <sycl/kernel_bundle.hpp>
-#include <sycl/stl.hpp>
 
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <set>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -31,22 +37,32 @@
 
 /// Executed as a part of current module's (.exe, .dll) static initialization.
 /// Registers device executable images with the runtime.
-extern "C" __SYCL_EXPORT void __sycl_register_lib(pi_device_binaries desc);
+extern "C" __SYCL_EXPORT void __sycl_register_lib(sycl_device_binaries desc);
 
 /// Executed as a part of current module's (.exe, .dll) static
 /// de-initialization.
 /// Unregisters device executable images with the runtime.
-extern "C" __SYCL_EXPORT void __sycl_unregister_lib(pi_device_binaries desc);
+extern "C" __SYCL_EXPORT void __sycl_unregister_lib(sycl_device_binaries desc);
 
 // +++ }
 
+// For testing purposes
+class ProgramManagerTest;
+
 namespace sycl {
-__SYCL_INLINE_VER_NAMESPACE(_V1) {
+inline namespace _V1 {
 class context;
 namespace detail {
 
-bool doesDevSupportImgAspects(const device &Dev,
-                              const RTDeviceBinaryImage &BinImages);
+bool doesDevSupportDeviceRequirements(const device &Dev,
+                                      const RTDeviceBinaryImage &BinImages);
+std::optional<sycl::exception>
+checkDevSupportDeviceRequirements(const device &Dev,
+                                  const RTDeviceBinaryImage &BinImages,
+                                  const NDRDescT &NDRDesc = {});
+
+bool doesImageTargetMatchDevice(const RTDeviceBinaryImage &Img,
+                                const device &Dev);
 
 // This value must be the same as in libdevice/device_itt.h.
 // See sycl/doc/design/ITTAnnotations.md for more info.
@@ -56,7 +72,8 @@ class context_impl;
 using ContextImplPtr = std::shared_ptr<context_impl>;
 class device_impl;
 using DeviceImplPtr = std::shared_ptr<device_impl>;
-class program_impl;
+class queue_impl;
+class event_impl;
 // DeviceLibExt is shared between sycl runtime and sycl-post-link tool.
 // If any update is made here, need to sync with DeviceLibExt definition
 // in llvm/tools/sycl-post-link/sycl-post-link.cpp
@@ -73,31 +90,69 @@ enum class DeviceLibExt : std::uint32_t {
   cl_intel_devicelib_bfloat16,
 };
 
+enum class SanitizerType {
+  None,
+  AddressSanitizer,
+  MemorySanitizer,
+  ThreadSanitizer
+};
+
+// A helper class for storing image/program objects and their dependencies
+// and making their handling a bit more readable.
+template <typename T> class ObjectWithDeps {
+public:
+  ObjectWithDeps(T Main) : Objs({std::move(Main)}) {}
+  // Assumes 0th element is the main one.
+  ObjectWithDeps(std::vector<T> AllObjs) : Objs{std::move(AllObjs)} {}
+
+  T &getMain() { return *Objs.begin(); }
+  const T &getMain() const { return *Objs.begin(); }
+  const std::vector<T> &getAll() const { return Objs; }
+  std::size_t size() const { return Objs.size(); }
+  bool hasDeps() const { return Objs.size() > 1; }
+  auto begin() { return Objs.begin(); }
+  auto begin() const { return Objs.begin(); }
+  auto end() { return Objs.end(); }
+  auto end() const { return Objs.end(); }
+  // TODO use a subrange once C++20 is available
+  auto depsBegin() const { return Objs.begin() + 1; }
+  auto depsEnd() const { return Objs.end(); }
+
+private:
+  std::vector<T> Objs;
+};
+
+using DevImgPlainWithDeps = ObjectWithDeps<device_image_plain>;
+using BinImgWithDeps = ObjectWithDeps<const RTDeviceBinaryImage *>;
+
 // Provides single loading and building OpenCL programs with unique contexts
 // that is necessary for no interoperability cases with lambda.
 class ProgramManager {
 public:
-  // TODO use a custom dynamic bitset instead to make initialization simpler.
-  using KernelArgMask = std::vector<bool>;
-
   // Returns the single instance of the program manager for the entire
   // process. Can only be called after staticInit is done.
   static ProgramManager &getInstance();
-  RTDeviceBinaryImage &getDeviceImage(OSModuleHandle M,
-                                      const std::string &KernelName,
+
+  RTDeviceBinaryImage &getDeviceImage(const std::string &KernelName,
                                       const context &Context,
-                                      const device &Device,
-                                      bool JITCompilationIsRequired = false);
-  RT::PiProgram createPIProgram(const RTDeviceBinaryImage &Img,
-                                const context &Context, const device &Device);
-  /// Creates a PI program using either a cached device code binary if present
+                                      const device &Device);
+
+  RTDeviceBinaryImage &getDeviceImage(
+      const std::unordered_set<RTDeviceBinaryImage *> &ImagesToVerify,
+      const context &Context, const device &Device);
+
+  ur_program_handle_t createURProgram(const RTDeviceBinaryImage &Img,
+                                      const context &Context,
+                                      const std::vector<device> &Devices);
+  /// Creates a UR program using either a cached device code binary if present
   /// in the persistent cache or from the supplied device image otherwise.
-  /// \param Img The device image to find a cached device code binary for or
-  ///        create the PI program with.
-  /// \param Context The context to find or create the PI program with.
-  /// \param Device The device to find or create the PI program for.
+  /// \param Img The device image used to create the program.
+  /// \param AllImages All images needed to build the program, used for cache
+  ///        lookup.
+  /// \param Context The context to find or create the UR program with.
+  /// \param Device The device to find or create the UR program for.
   /// \param CompileAndLinkOptions The compile and linking options to be used
-  ///        for building the PI program. These options must appear in the
+  ///        for building the UR program. These options must appear in the
   ///        mentioned order. This parameter is used as a partial key in the
   ///        cache and has no effect if no cached device code binary is found in
   ///        the persistent cache.
@@ -105,14 +160,14 @@ public:
   ///        image. This parameter is used  as a partial key in the cache and
   ///        has no effect if no cached device code binary is found in the
   ///        persistent cache.
-  /// \return A pair consisting of the PI program created with the corresponding
+  /// \return A pair consisting of the UR program created with the corresponding
   ///         device code binary and a boolean that is true if the device code
   ///         binary was found in the persistent cache and false otherwise.
-  std::pair<RT::PiProgram, bool>
-  getOrCreatePIProgram(const RTDeviceBinaryImage &Img, const context &Context,
-                       const device &Device,
-                       const std::string &CompileAndLinkOptions,
-                       SerializedObj SpecConsts);
+  std::pair<ur_program_handle_t, bool> getOrCreateURProgram(
+      const RTDeviceBinaryImage &Img,
+      const std::vector<const RTDeviceBinaryImage *> &AllImages,
+      const context &Context, const std::vector<device> &Devices,
+      const std::string &CompileAndLinkOptions, SerializedObj SpecConsts);
   /// Builds or retrieves from cache a program defining the kernel with given
   /// name.
   /// \param M identifies the OS module the kernel comes from (multiple OS
@@ -120,63 +175,60 @@ public:
   /// \param Context the context to build the program with
   /// \param Device the device for which the program is built
   /// \param KernelName the kernel's name
-  /// \param Prg provides build context information, such as
-  ///        current specialization constants settings; can be nullptr.
-  ///        Passing as a raw pointer is OK, since it is not captured anywhere
-  ///        once the function returns.
-  /// \param JITCompilationIsRequired If JITCompilationIsRequired is true
-  ///        add a check that kernel is compiled, otherwise don't add the check.
-  RT::PiProgram getBuiltPIProgram(OSModuleHandle M,
-                                  const ContextImplPtr &ContextImpl,
-                                  const DeviceImplPtr &DeviceImpl,
-                                  const std::string &KernelName,
-                                  const program_impl *Prg = nullptr,
-                                  bool JITCompilationIsRequired = false);
+  ur_program_handle_t getBuiltURProgram(const ContextImplPtr &ContextImpl,
+                                        const DeviceImplPtr &DeviceImpl,
+                                        const std::string &KernelName,
+                                        const NDRDescT &NDRDesc = {});
 
-  RT::PiProgram getBuiltPIProgram(OSModuleHandle M, const context &Context,
-                                  const device &Device,
-                                  const std::string &KernelName,
-                                  const property_list &PropList,
-                                  bool JITCompilationIsRequired = false);
+  /// Builds a program from a given set of images or retrieves that program from
+  /// cache.
+  /// \param ImgWithDeps is the main image the program is built with and its
+  /// dependencies.
+  /// \param Context is the context the program is built for.
+  /// \param Devs is a vector of devices the program is built for.
+  /// \param DevImgWithDeps is an optional DevImgPlainWithDeps pointer that
+  /// represents the images.
+  /// \param SpecConsts is an optional parameter containing spec constant values
+  /// the program should be built with.
+  ur_program_handle_t
+  getBuiltURProgram(const BinImgWithDeps &ImgWithDeps, const context &Context,
+                    const std::vector<device> &Devs,
+                    const DevImgPlainWithDeps *DevImgWithDeps = nullptr,
+                    const SerializedObj &SpecConsts = {});
 
-  std::tuple<RT::PiKernel, std::mutex *, RT::PiProgram>
-  getOrCreateKernel(OSModuleHandle M, const ContextImplPtr &ContextImpl,
+  std::tuple<ur_kernel_handle_t, std::mutex *, const KernelArgMask *,
+             ur_program_handle_t>
+  getOrCreateKernel(const ContextImplPtr &ContextImpl,
                     const DeviceImplPtr &DeviceImpl,
-                    const std::string &KernelName, const program_impl *Prg);
+                    const std::string &KernelName,
+                    const NDRDescT &NDRDesc = {});
 
-  RT::PiProgram getPiProgramFromPiKernel(RT::PiKernel Kernel,
-                                         const ContextImplPtr Context);
+  ur_kernel_handle_t getCachedMaterializedKernel(
+      const std::string &KernelName,
+      const std::vector<unsigned char> &SpecializationConsts);
 
-  void addImages(pi_device_binaries DeviceImages);
+  ur_kernel_handle_t getOrCreateMaterializedKernel(
+      const RTDeviceBinaryImage &Img, const context &Context,
+      const device &Device, const std::string &KernelName,
+      const std::vector<unsigned char> &SpecializationConsts);
+
+  ur_program_handle_t getUrProgramFromUrKernel(ur_kernel_handle_t Kernel,
+                                               const ContextImplPtr Context);
+
+  void addImages(sycl_device_binaries DeviceImages);
   void debugPrintBinaryImages() const;
-  static std::string getProgramBuildLog(const RT::PiProgram &Program,
-                                        const ContextImplPtr Context);
+  static std::string getProgramBuildLog(const ur_program_handle_t &Program,
+                                        const ContextImplPtr &Context);
 
-  /// Resolves given program to a device binary image and requests the program
-  /// to flush constants the image depends on.
-  /// \param Prg the program object to get spec constant settings from.
-  ///        Passing program_impl by raw reference is OK, since it is not
-  ///        captured anywhere once the function returns.
-  /// \param NativePrg the native program, target for spec constant setting; if
-  ///        not null then overrides the native program in Prg
-  /// \param Img A source of the information about which constants need
-  ///        setting and symboling->integer spec constant ID mapping. If not
-  ///        null, overrides native program->binary image binding maintained by
-  ///        the program manager.
-  void flushSpecConstants(const program_impl &Prg,
-                          pi::PiProgram NativePrg = nullptr,
-                          const RTDeviceBinaryImage *Img = nullptr);
   uint32_t getDeviceLibReqMask(const RTDeviceBinaryImage &Img);
 
   /// Returns the mask for eliminated kernel arguments for the requested kernel
   /// within the native program.
-  /// \param M identifies the OS module the kernel comes from (multiple OS
-  ///        modules may have kernels with the same name).
-  /// \param NativePrg the PI program associated with the kernel.
+  /// \param NativePrg the UR program associated with the kernel.
   /// \param KernelName the name of the kernel.
-  KernelArgMask getEliminatedKernelArgMask(OSModuleHandle M,
-                                           pi::PiProgram NativePrg,
-                                           const std::string &KernelName);
+  const KernelArgMask *
+  getEliminatedKernelArgMask(ur_program_handle_t NativePrg,
+                             const std::string &KernelName);
 
   // The function returns the unique SYCL kernel identifier associated with a
   // kernel name.
@@ -198,27 +250,52 @@ public:
   // Returns true if any available image is compatible with the device Dev.
   bool hasCompatibleImage(const device &Dev);
 
+  // The function gets a device_global entry identified by the pointer to the
+  // device_global object from the device_global map.
+  DeviceGlobalMapEntry *getDeviceGlobalEntry(const void *DeviceGlobalPtr);
+
+  // The function gets multiple device_global entries identified by their unique
+  // IDs from the device_global map.
+  std::vector<DeviceGlobalMapEntry *>
+  getDeviceGlobalEntries(const std::vector<std::string> &UniqueIds,
+                         bool ExcludeDeviceImageScopeDecorated = false);
+  // The function inserts or initializes a host_pipe entry into the
+  // host_pipe map.
+  void addOrInitHostPipeEntry(const void *HostPipePtr, const char *UniqueId);
+
+  // The function gets a host_pipe entry identified by the unique ID from
+  // the host_pipe map.
+  HostPipeMapEntry *getHostPipeEntry(const std::string &UniqueId);
+
+  // The function gets a host_pipe entry identified by the pointer to the
+  // host_pipe object from the host_pipe map.
+  HostPipeMapEntry *getHostPipeEntry(const void *HostPipePtr);
+
+  device_image_plain
+  getDeviceImageFromBinaryImage(RTDeviceBinaryImage *BinImage,
+                                const context &Ctx, const device &Dev);
+
   // The function returns a vector of SYCL device images that are compiled with
   // the required state and at least one device from the passed list of devices.
-  std::vector<device_image_plain> getSYCLDeviceImagesWithCompatibleState(
+  std::vector<DevImgPlainWithDeps> getSYCLDeviceImagesWithCompatibleState(
       const context &Ctx, const std::vector<device> &Devs,
       bundle_state TargetState, const std::vector<kernel_id> &KernelIDs = {});
 
   // Brind images in the passed vector to the required state. Does it inplace
   void
-  bringSYCLDeviceImagesToState(std::vector<device_image_plain> &DeviceImages,
+  bringSYCLDeviceImagesToState(std::vector<DevImgPlainWithDeps> &DeviceImages,
                                bundle_state TargetState);
 
   // The function returns a vector of SYCL device images in required state,
   // which are compatible with at least one of the device from Devs.
-  std::vector<device_image_plain>
+  std::vector<DevImgPlainWithDeps>
   getSYCLDeviceImages(const context &Ctx, const std::vector<device> &Devs,
                       bundle_state State);
 
   // The function returns a vector of SYCL device images, for which Selector
   // callable returns true, in required state, which are compatible with at
   // least one of the device from Devs.
-  std::vector<device_image_plain>
+  std::vector<DevImgPlainWithDeps>
   getSYCLDeviceImages(const context &Ctx, const std::vector<device> &Devs,
                       const DevImgSelectorImpl &Selector,
                       bundle_state TargetState);
@@ -226,37 +303,42 @@ public:
   // The function returns a vector of SYCL device images which represent at
   // least one kernel from kernel ids vector in required state, which are
   // compatible with at least one of the device from Devs.
-  std::vector<device_image_plain>
+  std::vector<DevImgPlainWithDeps>
   getSYCLDeviceImages(const context &Ctx, const std::vector<device> &Devs,
                       const std::vector<kernel_id> &KernelIDs,
                       bundle_state TargetState);
 
   // Produces new device image by convering input device image to the object
   // state
-  device_image_plain compile(const device_image_plain &DeviceImage,
-                             const std::vector<device> &Devs,
-                             const property_list &PropList);
+  DevImgPlainWithDeps compile(const DevImgPlainWithDeps &ImgWithDeps,
+                              const std::vector<device> &Devs,
+                              const property_list &PropList);
 
   // Produces set of device images by convering input device images to object
   // the executable state
-  std::vector<device_image_plain>
-  link(const std::vector<device_image_plain> &DeviceImages,
-       const std::vector<device> &Devs, const property_list &PropList);
+  std::vector<device_image_plain> link(const DevImgPlainWithDeps &ImgWithDeps,
+                                       const std::vector<device> &Devs,
+                                       const property_list &PropList);
 
   // Produces new device image by converting input device image to the
   // executable state
-  device_image_plain build(const device_image_plain &DeviceImage,
+  device_image_plain build(const DevImgPlainWithDeps &ImgWithDeps,
                            const std::vector<device> &Devs,
                            const property_list &PropList);
 
-  std::pair<RT::PiKernel, std::mutex *>
+  std::tuple<ur_kernel_handle_t, std::mutex *, const KernelArgMask *>
   getOrCreateKernel(const context &Context, const std::string &KernelName,
-                    const property_list &PropList, RT::PiProgram Program);
+                    const property_list &PropList, ur_program_handle_t Program);
 
   ProgramManager();
   ~ProgramManager() = default;
 
-  bool kernelUsesAssert(OSModuleHandle M, const std::string &KernelName) const;
+  bool kernelUsesAssert(const std::string &KernelName) const;
+
+  SanitizerType kernelUsesSanitizer() const { return m_SanitizerFoundInImage; }
+
+  std::optional<int>
+  kernelImplicitLocalArgPos(const std::string &KernelName) const;
 
   std::set<RTDeviceBinaryImage *>
   getRawDeviceImages(const std::vector<kernel_id> &KernelIDs);
@@ -265,62 +347,37 @@ private:
   ProgramManager(ProgramManager const &) = delete;
   ProgramManager &operator=(ProgramManager const &) = delete;
 
-  RTDeviceBinaryImage &getDeviceImage(OSModuleHandle M, KernelSetId KSId,
-                                      const context &Context,
-                                      const device &Device,
-                                      bool JITCompilationIsRequired = false);
-  using ProgramPtr = std::unique_ptr<remove_pointer_t<RT::PiProgram>,
-                                     decltype(&::piProgramRelease)>;
+  using ProgramPtr = std::unique_ptr<std::remove_pointer_t<ur_program_handle_t>,
+                                     decltype(&::urProgramRelease)>;
   ProgramPtr build(ProgramPtr Program, const ContextImplPtr Context,
                    const std::string &CompileOptions,
-                   const std::string &LinkOptions, const RT::PiDevice &Device,
-                   uint32_t DeviceLibReqMask);
-  /// Provides a new kernel set id for grouping kernel names together
-  KernelSetId getNextKernelSetId() const;
-  /// Returns the kernel set associated with the kernel, handles some special
-  /// cases (when reading images from file or using images with no entry info)
-  KernelSetId getKernelSetId(OSModuleHandle M,
-                             const std::string &KernelName) const;
+                   const std::string &LinkOptions,
+                   std::vector<ur_device_handle_t> &Devices,
+                   uint32_t DeviceLibReqMask,
+                   const std::vector<ur_program_handle_t> &ProgramsToLink,
+                   bool CreatedFromBinary = false);
+
   /// Dumps image to current directory
-  void dumpImage(const RTDeviceBinaryImage &Img, KernelSetId KSId) const;
+  void dumpImage(const RTDeviceBinaryImage &Img, uint32_t SequenceID = 0) const;
 
   /// Add info on kernels using assert into cache
-  void cacheKernelUsesAssertInfo(OSModuleHandle M, RTDeviceBinaryImage &Img);
+  void cacheKernelUsesAssertInfo(RTDeviceBinaryImage &Img);
+
+  /// Add info on kernels using local arg into cache
+  void cacheKernelImplicitLocalArg(RTDeviceBinaryImage &Img);
+
+  std::set<RTDeviceBinaryImage *>
+  collectDeviceImageDeps(const RTDeviceBinaryImage &Img, const device &Dev);
+  std::set<RTDeviceBinaryImage *>
+  collectDeviceImageDepsForImportedSymbols(const RTDeviceBinaryImage &Img,
+                                           const device &Dev);
+  std::set<RTDeviceBinaryImage *>
+  collectDependentDeviceImagesForVirtualFunctions(
+      const RTDeviceBinaryImage &Img, const device &Dev);
 
   /// The three maps below are used during kernel resolution. Any kernel is
-  /// identified by its name and the OS module it's coming from, allowing
-  /// kernels with identical names in different OS modules. The following
-  /// assumption is made: for any two device images in a SYCL application
-  /// their kernel sets are either identical or disjoint. Based on this
-  /// assumption, m_KernelSets is used to group kernels together into sets by
-  /// assigning a set ID to them during device image registration. This ID is
-  /// then mapped to a vector of device images containing kernels from the set
-  /// (m_DeviceImages). An exception is made for device images with no entry
-  /// information: a special kernel set ID is used for them which is assigned
-  /// to just the OS module. These kernel set ids are stored in
-  /// m_OSModuleKernelSets and device images associated with them are assumed
-  /// to contain all kernels coming from that OS module.
-
+  /// identified by its name.
   using RTDeviceBinaryImageUPtr = std::unique_ptr<RTDeviceBinaryImage>;
-
-  /// Keeps all available device executable images added via \ref addImages.
-  /// Organizes the images as a map from a kernel set id to the vector of images
-  /// containing kernels from that set.
-  /// Access must be guarded by the \ref Sync::getGlobalLock()
-  std::unordered_map<KernelSetId,
-                     std::unique_ptr<std::vector<RTDeviceBinaryImageUPtr>>>
-      m_DeviceImages;
-
-  using StrToKSIdMap = std::unordered_map<std::string, KernelSetId>;
-  /// Maps names of kernels from a specific OS module (.exe .dll) to their set
-  /// id (the sets are disjoint).
-  /// Access must be guarded by the \ref Sync::getGlobalLock()
-  std::unordered_map<OSModuleHandle, StrToKSIdMap> m_KernelSets;
-
-  /// Keeps kernel sets for OS modules containing images without entry info.
-  /// Such images are assumed to contain all kernel associated with the module.
-  /// Access must be guarded by the \ref Sync::getGlobalLock()
-  std::unordered_map<OSModuleHandle, KernelSetId> m_OSModuleKernelSets;
 
   /// Maps names of kernels to their unique kernel IDs.
   /// TODO: Use std::unordered_set with transparent hash and equality functions
@@ -331,6 +388,7 @@ private:
 
   // Maps KernelIDs to device binary images. There can be more than one image
   // in case of SPIRV + AOT.
+  // Using shared_ptr to avoid expensive copy of the vector.
   /// Access must be guarded by the m_KernelIDsMutex mutex.
   std::unordered_multimap<kernel_id, RTDeviceBinaryImage *>
       m_KernelIDs2BinImage;
@@ -356,34 +414,45 @@ private:
   /// in the sycl::detail::__sycl_service_kernel__ namespace which is
   /// exclusively used for this purpose.
   /// Access must be guarded by the m_KernelIDsMutex mutex.
-  std::unordered_set<std::string> m_ServiceKernels;
+  std::unordered_multimap<std::string, RTDeviceBinaryImage *> m_ServiceKernels;
 
   /// Caches all exported symbols to allow faster lookup when excluding these
   // from kernel bundles.
   /// Access must be guarded by the m_KernelIDsMutex mutex.
-  std::unordered_set<std::string> m_ExportedSymbols;
+  std::unordered_multimap<std::string, RTDeviceBinaryImage *>
+      m_ExportedSymbolImages;
+
+  /// Keeps all device images we are refering to during program lifetime. Used
+  /// for proper cleanup.
+  std::unordered_set<RTDeviceBinaryImageUPtr> m_DeviceImages;
 
   /// Maps names of built-in kernels to their unique kernel IDs.
   /// Access must be guarded by the m_BuiltInKernelIDsMutex mutex.
   std::unordered_map<std::string, kernel_id> m_BuiltInKernelIDs;
 
+  /// Caches list of device images that use or provide virtual functions from
+  /// the same set. Used to simplify access.
+  std::unordered_map<std::string, std::set<RTDeviceBinaryImage *>>
+      m_VFSet2BinImage;
+
   /// Protects built-in kernel ID cache.
   std::mutex m_BuiltInKernelIDsMutex;
 
-  // Keeps track of pi_program to image correspondence. Needed for:
+  // Keeps track of ur_program to image correspondence. Needed for:
   // - knowing which specialization constants are used in the program and
   //   injecting their current values before compiling the SPIR-V; the binary
   //   image object has info about all spec constants used in the module
   // - finding kernel argument masks for kernels associated with each
-  //   pi_program
+  //   ur_program
   // NOTE: using RTDeviceBinaryImage raw pointers is OK, since they are not
   // referenced from outside SYCL runtime and RTDeviceBinaryImage object
   // lifetime matches program manager's one.
   // NOTE: keys in the map can be invalid (reference count went to zero and
   // the underlying program disposed of), so the map can't be used in any way
-  // other than binary image lookup with known live PiProgram as the key.
+  // other than binary image lookup with known live UrProgram as the key.
   // NOTE: access is synchronized via the MNativeProgramsMutex
-  std::unordered_map<pi::PiProgram, const RTDeviceBinaryImage *> NativePrograms;
+  std::unordered_multimap<ur_program_handle_t, const RTDeviceBinaryImage *>
+      NativePrograms;
 
   /// Protects NativePrograms that can be changed by class' methods.
   std::mutex MNativeProgramsMutex;
@@ -396,9 +465,13 @@ private:
 
   /// True iff a SPIR-V file has been specified with an environment variable
   bool m_UseSpvFile = false;
+  RTDeviceBinaryImageUPtr m_SpvFileImage;
 
-  using KernelNameWithOSModule = std::pair<std::string, OSModuleHandle>;
-  std::set<KernelNameWithOSModule> m_KernelUsesAssert;
+  std::set<std::string> m_KernelUsesAssert;
+  std::unordered_map<std::string, int> m_KernelImplicitLocalArgPos;
+
+  // Sanitizer type used in device image
+  SanitizerType m_SanitizerFoundInImage;
 
   // Maps between device_global identifiers and associated information.
   std::unordered_map<std::string, std::unique_ptr<DeviceGlobalMapEntry>>
@@ -407,7 +480,21 @@ private:
 
   /// Protects m_DeviceGlobals and m_Ptr2DeviceGlobal.
   std::mutex m_DeviceGlobalsMutex;
+
+  // Maps between host_pipe identifiers and associated information.
+  std::unordered_map<std::string, std::unique_ptr<HostPipeMapEntry>>
+      m_HostPipes;
+  std::unordered_map<const void *, HostPipeMapEntry *> m_Ptr2HostPipe;
+
+  /// Protects m_HostPipes and m_Ptr2HostPipe.
+  std::mutex m_HostPipesMutex;
+
+  using MaterializedEntries =
+      std::map<std::vector<unsigned char>, ur_kernel_handle_t>;
+  std::unordered_map<std::string, MaterializedEntries> m_MaterializedKernels;
+
+  friend class ::ProgramManagerTest;
 };
 } // namespace detail
-} // __SYCL_INLINE_VER_NAMESPACE(_V1)
+} // namespace _V1
 } // namespace sycl

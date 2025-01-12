@@ -22,10 +22,10 @@
 #include "clang/AST/TemplateBase.h"
 #include "clang/Basic/PartialDiagnostic.h"
 #include "clang/Basic/SourceLocation.h"
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
 #include <cassert>
 #include <cstddef>
+#include <optional>
 #include <utility>
 
 namespace clang {
@@ -33,6 +33,7 @@ namespace clang {
 class Decl;
 struct DeducedPack;
 class Sema;
+enum class TemplateDeductionResult;
 
 namespace sema {
 
@@ -234,6 +235,13 @@ public:
   ///   different argument type from its substituted parameter type.
   unsigned CallArgIndex = 0;
 
+  // C++20 [over.match.class.deduct]p5.2:
+  //   During template argument deduction for the aggregate deduction
+  //   candidate, the number of elements in a trailing parameter pack is only
+  //   deduced from the number of remaining function arguments if it is not
+  //   otherwise deduced.
+  bool AggregateDeductionCandidateHasMismatchedArity = false;
+
   /// Information on packs that we're currently expanding.
   ///
   /// FIXME: This should be kept internal to SemaTemplateDeduction.
@@ -284,10 +292,14 @@ struct DeductionFailureInfo {
 
   /// Return the index of the call argument that this deduction
   /// failure refers to, if any.
-  llvm::Optional<unsigned> getCallArgIndex();
+  std::optional<unsigned> getCallArgIndex();
 
   /// Free any memory associated with this deduction failure.
   void Destroy();
+
+  TemplateDeductionResult getResult() const {
+    return static_cast<TemplateDeductionResult>(Result);
+  }
 };
 
 /// TemplateSpecCandidate - This is a generalization of OverloadCandidate

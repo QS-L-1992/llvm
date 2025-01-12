@@ -14,12 +14,14 @@
 #ifndef MLIR_IR_ASMSTATE_H_
 #define MLIR_IR_ASMSTATE_H_
 
+#include "mlir/Bytecode/BytecodeReaderConfig.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/StringMap.h"
 
 #include <memory>
+#include <variant>
 
 namespace mlir {
 class AsmResourcePrinter;
@@ -79,6 +81,8 @@ class AsmStateImpl;
 
 //===----------------------------------------------------------------------===//
 // Resource Entry
+
+class HeapAsmResourceBlob;
 
 /// This class represents a processed binary blob of data. A resource blob is
 /// essentially a collection of data, potentially mutable, with an associated
@@ -144,8 +148,7 @@ public:
   /// known to be of the correct type.
   template <typename T>
   ArrayRef<T> getDataAs() const {
-    return llvm::makeArrayRef<T>((const T *)data.data(),
-                                 data.size() / sizeof(T));
+    return llvm::ArrayRef<T>((const T *)data.data(), data.size() / sizeof(T));
   }
 
   /// Return a mutable reference to the raw underlying data of this blob.
@@ -176,6 +179,8 @@ private:
 
   /// Whether the data is mutable.
   bool dataIsMutable;
+
+  friend class HeapAsmResourceBlob;
 };
 
 /// This class provides a simple utility wrapper for creating heap allocated
@@ -195,8 +200,11 @@ public:
   static AsmResourceBlob allocateAndCopyWithAlign(ArrayRef<char> data,
                                                   size_t align,
                                                   bool dataIsMutable = true) {
-    AsmResourceBlob blob = allocate(data.size(), align, dataIsMutable);
+    // This sets the blob to be mutable initially to allow writing
+    // (getMutableData) below.
+    AsmResourceBlob blob = allocate(data.size(), align, /*dataIsMutable=*/true);
     std::memcpy(blob.getMutableData().data(), data.data(), data.size());
+    blob.dataIsMutable = dataIsMutable;
     return blob;
   }
   template <typename T>
@@ -215,17 +223,19 @@ public:
   /// Create a new unmanaged resource directly referencing the provided data.
   /// `dataIsMutable` indicates if the allocated data can be mutated. By
   /// default, we treat unmanaged blobs as immutable.
-  static AsmResourceBlob allocateWithAlign(ArrayRef<char> data, size_t align,
-                                           bool dataIsMutable = false) {
-    return AsmResourceBlob(data, align, /*deleter=*/{},
-                           /*dataIsMutable=*/false);
+  static AsmResourceBlob
+  allocateWithAlign(ArrayRef<char> data, size_t align,
+                    AsmResourceBlob::DeleterFn deleter = {},
+                    bool dataIsMutable = false) {
+    return AsmResourceBlob(data, align, std::move(deleter), dataIsMutable);
   }
   template <typename T>
-  static AsmResourceBlob allocateInferAlign(ArrayRef<T> data,
-                                            bool dataIsMutable = false) {
+  static AsmResourceBlob
+  allocateInferAlign(ArrayRef<T> data, AsmResourceBlob::DeleterFn deleter = {},
+                     bool dataIsMutable = false) {
     return allocateWithAlign(
         ArrayRef<char>((const char *)data.data(), data.size() * sizeof(T)),
-        alignof(T));
+        alignof(T), std::move(deleter), dataIsMutable);
   }
 };
 
@@ -473,6 +483,11 @@ public:
   /// Returns if the parser should verify the IR after parsing.
   bool shouldVerifyAfterParse() const { return verifyAfterParse; }
 
+  /// Returns the parsing configurations associated to the bytecode read.
+  BytecodeReaderConfig &getBytecodeReaderConfig() const {
+    return const_cast<BytecodeReaderConfig &>(bytecodeReaderConfig);
+  }
+
   /// Return the resource parser registered to the given name, or nullptr if no
   /// parser with `name` is registered.
   AsmResourceParser *getResourceParser(StringRef name) const {
@@ -507,6 +522,7 @@ private:
   bool verifyAfterParse;
   DenseMap<StringRef, std::unique_ptr<AsmResourceParser>> resourceParsers;
   FallbackAsmResourceMap *fallbackResourceMap;
+  BytecodeReaderConfig bytecodeReaderConfig;
 };
 
 //===----------------------------------------------------------------------===//

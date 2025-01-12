@@ -23,6 +23,7 @@
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/SmallVector.h"
 #include <cassert>
+#include <optional>
 #include <utility>
 
 namespace clang {
@@ -212,7 +213,9 @@ enum class TemplateSubstitutionKind : char {
              "substituted args outside retained args?");
       assert(getKind() == TemplateSubstitutionKind::Specialization);
       TemplateArgumentLists.push_back(
-          {{AssociatedDecl->getCanonicalDecl(), Final}, Args});
+          {{AssociatedDecl ? AssociatedDecl->getCanonicalDecl() : nullptr,
+            Final},
+           Args});
     }
 
     void addOuterTemplateArguments(ArgList Args) {
@@ -231,9 +234,21 @@ enum class TemplateSubstitutionKind : char {
     /// Replaces the current 'innermost' level with the provided argument list.
     /// This is useful for type deduction cases where we need to get the entire
     /// list from the AST, but then add the deduced innermost list.
-    void replaceInnermostTemplateArguments(ArgList Args) {
-      assert(TemplateArgumentLists.size() > 0 && "Replacing in an empty list?");
-      TemplateArgumentLists[0].Args = Args;
+    void replaceInnermostTemplateArguments(Decl *AssociatedDecl, ArgList Args) {
+      assert((!TemplateArgumentLists.empty() || NumRetainedOuterLevels) &&
+             "Replacing in an empty list?");
+
+      if (!TemplateArgumentLists.empty()) {
+        assert((TemplateArgumentLists[0].AssociatedDeclAndFinal.getPointer() ||
+                TemplateArgumentLists[0].AssociatedDeclAndFinal.getPointer() ==
+                    AssociatedDecl) &&
+               "Trying to change incorrect declaration?");
+        TemplateArgumentLists[0].Args = Args;
+      } else {
+        --NumRetainedOuterLevels;
+        TemplateArgumentLists.push_back(
+            {{AssociatedDecl, /*Final=*/false}, Args});
+      }
     }
 
     /// Add an outermost level that we are not substituting. We have no
@@ -260,6 +275,23 @@ enum class TemplateSubstitutionKind : char {
     }
     ArgListsIterator end() { return TemplateArgumentLists.end(); }
     ConstArgListsIterator end() const { return TemplateArgumentLists.end(); }
+
+    LLVM_DUMP_METHOD void dump() const {
+      LangOptions LO;
+      LO.CPlusPlus = true;
+      LO.Bool = true;
+      PrintingPolicy PP(LO);
+      llvm::errs() << "NumRetainedOuterLevels: " << NumRetainedOuterLevels
+                   << "\n";
+      for (unsigned Depth = NumRetainedOuterLevels; Depth < getNumLevels();
+           ++Depth) {
+        llvm::errs() << Depth << ": ";
+        printTemplateArgumentList(
+            llvm::errs(),
+            TemplateArgumentLists[getNumLevels() - Depth - 1].Args, PP);
+        llvm::errs() << "\n";
+      }
+    }
   };
 
   /// The context in which partial ordering of function templates occurs.
@@ -379,6 +411,11 @@ enum class TemplateSubstitutionKind : char {
     /// lookup will search our outer scope.
     bool CombineWithOuterScope;
 
+    /// Whether this scope is being used to instantiate a lambda or block
+    /// expression, in which case it should be reused for instantiating the
+    /// lambda's FunctionProtoType.
+    bool InstantiatingLambdaOrBlock = false;
+
     /// If non-NULL, the template parameter pack that has been
     /// partially substituted per C++0x [temp.arg.explicit]p9.
     NamedDecl *PartiallySubstitutedPack = nullptr;
@@ -393,9 +430,11 @@ enum class TemplateSubstitutionKind : char {
     unsigned NumArgsInPartiallySubstitutedPack;
 
   public:
-    LocalInstantiationScope(Sema &SemaRef, bool CombineWithOuterScope = false)
+    LocalInstantiationScope(Sema &SemaRef, bool CombineWithOuterScope = false,
+                            bool InstantiatingLambdaOrBlock = false)
         : SemaRef(SemaRef), Outer(SemaRef.CurrentInstantiationScope),
-          CombineWithOuterScope(CombineWithOuterScope) {
+          CombineWithOuterScope(CombineWithOuterScope),
+          InstantiatingLambdaOrBlock(InstantiatingLambdaOrBlock) {
       SemaRef.CurrentInstantiationScope = this;
     }
 
@@ -447,10 +486,10 @@ enum class TemplateSubstitutionKind : char {
         const Decl *D = I->first;
         llvm::PointerUnion<Decl *, DeclArgumentPack *> &Stored =
           newScope->LocalDecls[D];
-        if (I->second.is<Decl *>()) {
-          Stored = I->second.get<Decl *>();
+        if (auto *D2 = dyn_cast<Decl *>(I->second)) {
+          Stored = D2;
         } else {
-          DeclArgumentPack *OldPack = I->second.get<DeclArgumentPack *>();
+          DeclArgumentPack *OldPack = cast<DeclArgumentPack *>(I->second);
           DeclArgumentPack *NewPack = new DeclArgumentPack(*OldPack);
           Stored = NewPack;
           newScope->ArgumentPacks.push_back(NewPack);
@@ -521,6 +560,9 @@ enum class TemplateSubstitutionKind : char {
 
     /// Determine whether D is a pack expansion created in this scope.
     bool isLocalPackExpansion(const Decl *D);
+
+    /// Determine whether this scope is for instantiating a lambda or block.
+    bool isLambdaOrBlock() const { return InstantiatingLambdaOrBlock; }
   };
 
   class TemplateDeclInstantiator
@@ -532,6 +574,7 @@ enum class TemplateSubstitutionKind : char {
     const MultiLevelTemplateArgumentList &TemplateArgs;
     Sema::LateInstantiatedAttrVec* LateAttrs = nullptr;
     LocalInstantiationScope *StartingScope = nullptr;
+    // Whether to evaluate the C++20 constraints or simply substitute into them.
     bool EvaluateConstraints = true;
 
     /// A list of out-of-line class template partial
@@ -600,8 +643,6 @@ enum class TemplateSubstitutionKind : char {
     // A few supplemental visitor functions.
     Decl *VisitCXXMethodDecl(CXXMethodDecl *D,
                              TemplateParameterList *TemplateParams,
-                             Optional<const ASTTemplateArgumentListInfo *>
-                                 ClassScopeSpecializationArgs = std::nullopt,
                              RewriteKind RK = RewriteKind::None);
     Decl *VisitFunctionDecl(FunctionDecl *D,
                             TemplateParameterList *TemplateParams,
@@ -680,6 +721,7 @@ enum class TemplateSubstitutionKind : char {
         VarTemplateSpecializationDecl *PrevDecl = nullptr);
 
     Decl *InstantiateTypedefNameDecl(TypedefNameDecl *D, bool IsTypeAlias);
+    Decl *InstantiateTypeAliasTemplateDecl(TypeAliasTemplateDecl *D);
     ClassTemplatePartialSpecializationDecl *
     InstantiateClassTemplatePartialSpecialization(
                                               ClassTemplateDecl *ClassTemplate,

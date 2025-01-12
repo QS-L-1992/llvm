@@ -24,8 +24,6 @@ void HexagonTargetInfo::getTargetDefines(const LangOptions &Opts,
   Builder.defineMacro("__qdsp6__", "1");
   Builder.defineMacro("__hexagon__", "1");
 
-  Builder.defineMacro("__ELF__");
-
   // The macro __HVXDBL__ is deprecated.
   bool DefineHvxDbl = false;
 
@@ -80,6 +78,12 @@ void HexagonTargetInfo::getTargetDefines(const LangOptions &Opts,
   } else if (CPU == "hexagonv73") {
     Builder.defineMacro("__HEXAGON_V73__");
     Builder.defineMacro("__HEXAGON_ARCH__", "73");
+  } else if (CPU == "hexagonv75") {
+    Builder.defineMacro("__HEXAGON_V75__");
+    Builder.defineMacro("__HEXAGON_ARCH__", "75");
+  } else if (CPU == "hexagonv79") {
+    Builder.defineMacro("__HEXAGON_V79__");
+    Builder.defineMacro("__HEXAGON_ARCH__", "79");
   }
 
   if (hasFeature("hvx-length64b")) {
@@ -102,6 +106,11 @@ void HexagonTargetInfo::getTargetDefines(const LangOptions &Opts,
 
   std::string NumPhySlots = isTinyCore() ? "3" : "4";
   Builder.defineMacro("__HEXAGON_PHYSICAL_SLOTS__", NumPhySlots);
+
+  Builder.defineMacro("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_1");
+  Builder.defineMacro("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_2");
+  Builder.defineMacro("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_4");
+  Builder.defineMacro("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_8");
 }
 
 bool HexagonTargetInfo::initFeatureMap(
@@ -182,7 +191,7 @@ const char *const HexagonTargetInfo::GCCRegNames[] = {
 };
 
 ArrayRef<const char *> HexagonTargetInfo::getGCCRegNames() const {
-  return llvm::makeArrayRef(GCCRegNames);
+  return llvm::ArrayRef(GCCRegNames);
 }
 
 const TargetInfo::GCCRegAlias HexagonTargetInfo::GCCRegAliases[] = {
@@ -192,16 +201,16 @@ const TargetInfo::GCCRegAlias HexagonTargetInfo::GCCRegAliases[] = {
 };
 
 ArrayRef<TargetInfo::GCCRegAlias> HexagonTargetInfo::getGCCRegAliases() const {
-  return llvm::makeArrayRef(GCCRegAliases);
+  return llvm::ArrayRef(GCCRegAliases);
 }
 
-const Builtin::Info HexagonTargetInfo::BuiltinInfo[] = {
+static constexpr Builtin::Info BuiltinInfo[] = {
 #define BUILTIN(ID, TYPE, ATTRS)                                               \
-  {#ID, TYPE, ATTRS, nullptr, ALL_LANGUAGES, nullptr},
+  {#ID, TYPE, ATTRS, nullptr, HeaderDesc::NO_HEADER, ALL_LANGUAGES},
 #define LIBBUILTIN(ID, TYPE, ATTRS, HEADER)                                    \
-  {#ID, TYPE, ATTRS, HEADER, ALL_LANGUAGES, nullptr},
+  {#ID, TYPE, ATTRS, nullptr, HEADER, ALL_LANGUAGES},
 #define TARGET_BUILTIN(ID, TYPE, ATTRS, FEATURE)                               \
-  {#ID, TYPE, ATTRS, nullptr, ALL_LANGUAGES, FEATURE},
+  {#ID, TYPE, ATTRS, FEATURE, HeaderDesc::NO_HEADER, ALL_LANGUAGES},
 #include "clang/Basic/BuiltinsHexagon.def"
 };
 
@@ -226,14 +235,27 @@ struct CPUSuffix {
 };
 
 static constexpr CPUSuffix Suffixes[] = {
-    {{"hexagonv5"},  {"5"}},  {{"hexagonv55"},  {"55"}},
-    {{"hexagonv60"}, {"60"}}, {{"hexagonv62"},  {"62"}},
-    {{"hexagonv65"}, {"65"}}, {{"hexagonv66"},  {"66"}},
+    {{"hexagonv5"}, {"5"}},   {{"hexagonv55"}, {"55"}},
+    {{"hexagonv60"}, {"60"}}, {{"hexagonv62"}, {"62"}},
+    {{"hexagonv65"}, {"65"}}, {{"hexagonv66"}, {"66"}},
     {{"hexagonv67"}, {"67"}}, {{"hexagonv67t"}, {"67t"}},
-    {{"hexagonv68"}, {"68"}}, {{"hexagonv69"},  {"69"}},
-    {{"hexagonv71"}, {"71"}}, {{"hexagonv71t"},  {"71t"}},
-    {{"hexagonv73"}, {"73"}},
+    {{"hexagonv68"}, {"68"}}, {{"hexagonv69"}, {"69"}},
+    {{"hexagonv71"}, {"71"}}, {{"hexagonv71t"}, {"71t"}},
+    {{"hexagonv73"}, {"73"}}, {{"hexagonv75"}, {"75"}},
+    {{"hexagonv79"}, {"79"}},
 };
+
+std::optional<unsigned> HexagonTargetInfo::getHexagonCPURev(StringRef Name) {
+  StringRef Arch = Name;
+  Arch.consume_front("hexagonv");
+  Arch.consume_back("t");
+
+  unsigned Val;
+  if (!Arch.getAsInteger(0, Val))
+    return Val;
+
+  return std::nullopt;
+}
 
 const char *HexagonTargetInfo::getHexagonCPUSuffix(StringRef Name) {
   const CPUSuffix *Item = llvm::find_if(
@@ -250,6 +272,6 @@ void HexagonTargetInfo::fillValidCPUList(
 }
 
 ArrayRef<Builtin::Info> HexagonTargetInfo::getTargetBuiltins() const {
-  return llvm::makeArrayRef(BuiltinInfo, clang::Hexagon::LastTSBuiltin -
-                                             Builtin::FirstTSBuiltin);
+  return llvm::ArrayRef(BuiltinInfo, clang::Hexagon::LastTSBuiltin -
+                                         Builtin::FirstTSBuiltin);
 }

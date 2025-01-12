@@ -1,5 +1,6 @@
 add_custom_target(SYCLUnitTests)
 set_target_properties(SYCLUnitTests PROPERTIES FOLDER "SYCL tests")
+include_directories(${BOOST_UNORDERED_INCLUDE_DIRS})
 
 foreach(flag_var
     CMAKE_CXX_FLAGS CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_RELEASE
@@ -24,13 +25,7 @@ include(AddSYCLUnitTest)
 
 add_custom_target(check-sycl-unittests)
 
-# TODO PI tests require real hardware and must be moved to intel/llvm-test-suite
-option(SYCL_PI_TESTS "Enable PI-specific unit tests" ON)
-
-if (SYCL_PI_TESTS)
-  add_subdirectory(pi)
-endif()
-
+add_subdirectory(ur)
 add_subdirectory(allowlist)
 add_subdirectory(config)
 add_subdirectory(misc)
@@ -40,13 +35,28 @@ add_subdirectory(scheduler)
 add_subdirectory(stream)
 add_subdirectory(SYCL2020)
 add_subdirectory(thread_safety)
+add_subdirectory(pipes)
 add_subdirectory(program_manager)
 add_subdirectory(assert)
 add_subdirectory(Extensions)
 add_subdirectory(windows)
 add_subdirectory(event)
 add_subdirectory(buffer)
-add_subdirectory(context)
+add_subdirectory(context_device)
 add_subdirectory(accessor)
 add_subdirectory(handler)
-add_subdirectory(IsCompatible)
+add_subdirectory(builtins)
+add_subdirectory(buffer/l0_specific)
+
+# Enable compression unit-tests only if zstd is present.
+if (LLVM_ENABLE_ZSTD)
+    add_subdirectory(compression)
+endif()
+
+# TODO Enable xpti tests for Windows
+if (NOT WIN32)
+    add_subdirectory(xpti_trace)
+endif()
+add_subdirectory(sampler)
+add_subdirectory(reduction)
+add_subdirectory(OneAPIDeviceSelector)

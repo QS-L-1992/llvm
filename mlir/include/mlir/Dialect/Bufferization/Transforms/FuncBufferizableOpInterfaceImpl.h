@@ -12,6 +12,7 @@
 #include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "llvm/ADT/SmallVector.h"
 
 namespace mlir {
 class DialectRegistry;
@@ -21,6 +22,9 @@ class FuncOp;
 } // namespace func
 
 namespace bufferization {
+/// Helper function that returns all func.return ops in the given function.
+SmallVector<func::ReturnOp> getReturnOps(func::FuncOp funcOp);
+
 namespace func_ext {
 /// The state of analysis of a FuncOp.
 enum class FuncOpAnalysisState { NotAnalyzed, InProgress, Analyzed };
@@ -51,9 +55,6 @@ struct FuncAnalysisState : public OneShotAnalysisState::Extension {
   /// A mapping of ReturnOp OpOperand indices to equivalent FuncOp BBArg
   /// indices.
   DenseMap<FuncOp, IndexMapping> equivalentFuncArgs;
-
-  /// A mapping of ReturnOp OpOperand indices to aliasing FuncOp BBArg indices.
-  DenseMap<FuncOp, IndexToIndexListMapping> aliasingFuncArgs;
 
   /// A mapping of FuncOp BBArg indices to aliasing ReturnOp OpOperand indices.
   DenseMap<FuncOp, IndexToIndexListMapping> aliasingReturnVals;

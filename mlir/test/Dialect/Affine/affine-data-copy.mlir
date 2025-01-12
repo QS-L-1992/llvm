@@ -286,3 +286,70 @@ func.func @empty_loops(%arg0: memref<1024x1024xf64>) {
   // CHECK-NOT:    memref.alloc
   // CHECK:        return
 }
+
+#map16 = affine_map<(d0, d1, d2) -> (d0 * 40 + d1 * 8 + d2 * 2)>
+#map17 = affine_map<(d0, d1, d2) -> (d0 * 40 + d1 * 8 + d2 * 2 + 2)>
+// CHECK-LABEL: func @affine_parallel
+func.func @affine_parallel(%85:memref<2x5x4x2xi64>) {
+  affine.for %arg0 = 0 to 2 {
+    affine.parallel (%arg1) = (0) to (5) {
+      affine.parallel (%arg2) = (0) to (4) {
+        affine.for %arg3 = #map16(%arg0, %arg1, %arg2) to #map17(%arg0, %arg1, %arg2) {
+          %105 = affine.load %85[((%arg3 floordiv 2) floordiv 4) floordiv 5, ((%arg3 floordiv 2) floordiv 4) mod 5, (%arg3 floordiv 2) mod 4, %arg3 mod 2] : memref<2x5x4x2xi64>
+        }
+      }
+    }
+  }
+  // CHECK:     affine.for
+  // CHECK-NEXT:  affine.for %{{.*}} = 0 to 5
+  // CHECK-NEXT:    affine.for %{{.*}} = 0 to 4
+  // CHECK-NEXT:      affine.for %{{.*}} = 0 to 2
+
+  // CHECK:     affine.for
+  // CHECK-NEXT:  affine.parallel
+  // CHECK-NEXT:    affine.parallel
+  return
+}
+
+// CHECK-LABEL: func @index_elt_type
+func.func @index_elt_type(%arg0: memref<1x2x4x8xindex>) {
+  affine.for %arg1 = 0 to 1 {
+    affine.for %arg2 = 0 to 2 {
+      affine.for %arg3 = 0 to 4 {
+        affine.for %arg4 = 0 to 8 {
+          affine.store %arg4, %arg0[%arg1, %arg2, %arg3, %arg4] : memref<1x2x4x8xindex>
+        }
+      }
+    }
+  }
+
+  // CHECK:     affine.for %{{.*}} = 0 to 1
+  // CHECK-NEXT:  affine.for %{{.*}} = 0 to 2
+  // CHECK-NEXT:    affine.for %{{.*}} = 0 to 4
+  // CHECK-NEXT:      affine.for %{{.*}} = 0 to 8
+
+  // CHECK:     affine.for %{{.*}} = 0 to 2
+  // CHECK-NEXT:  affine.for %{{.*}} = 0 to 4
+  // CHECK-NEXT:    affine.for %{{.*}} = 0 to 8
+  return
+}
+
+#map = affine_map<(d0) -> (d0 + 1)>
+
+// CHECK-LABEL: func @arbitrary_memory_space
+func.func @arbitrary_memory_space() {
+  %alloc = memref.alloc() : memref<256x8xi8, #spirv.storage_class<StorageBuffer>>
+  affine.for %arg0 = 0 to 32 step 4 {
+    %0 = affine.apply #map(%arg0)
+    affine.for %arg1 = 0 to 8 step 2 {
+      %1 = affine.apply #map(%arg1)
+      affine.for %arg2 = 0 to 8 step 2 {
+        // CHECK: memref.alloc() : memref<1x7xi8>
+        %2 = affine.apply #map(%arg2)
+        %3 = affine.load %alloc[%0, %1] : memref<256x8xi8, #spirv.storage_class<StorageBuffer>>
+        affine.store %3, %alloc[%0, %2] : memref<256x8xi8, #spirv.storage_class<StorageBuffer>>
+      }
+    }
+  }
+  return
+}

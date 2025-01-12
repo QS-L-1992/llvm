@@ -16,8 +16,11 @@
 #include <vector>
 
 namespace sycl {
-__SYCL_INLINE_VER_NAMESPACE(_V1) {
+inline namespace _V1 {
 namespace ext::intel::experimental {
+namespace detail {
+using namespace sycl::detail;
+}
 
 using byte = unsigned char;
 
@@ -67,7 +70,8 @@ private:
 class online_compile_error : public sycl::exception {
 public:
   online_compile_error() = default;
-  online_compile_error(const std::string &Msg) : sycl::exception(Msg) {}
+  online_compile_error(const std::string &Msg)
+      : sycl::exception(make_error_code(errc::invalid), Msg) {}
 };
 
 /// Designates a source language for the online compiler.
@@ -75,7 +79,35 @@ enum class source_language { opencl_c = 0, cm = 1 };
 
 /// Represents an online compiler for the language given as template
 /// parameter.
-template <source_language Lang> class online_compiler {
+template <source_language Lang>
+class __SYCL2020_DEPRECATED(
+    "experimental online_compiler is being deprecated. See "
+    "'sycl_ext_oneapi_kernel_compiler.asciidoc' instead for new kernel "
+    "compiler extension to kernel_bundle implementation.") online_compiler {
+#if __INTEL_PREVIEW_BREAKING_CHANGES
+  // Refactor this during next ABI Breaking window. We have an `std::string`
+  // data member so cannot be accessing `this` when crossing ABI boundary.
+#endif
+  __SYCL_EXPORT static std::vector<byte>
+  compile_impl(detail::string_view Src,
+               const std::vector<detail::string_view> &Options,
+               std::pair<int, int> OutputFormatVersion,
+               sycl::info::device_type DeviceType, device_arch DeviceArch,
+               bool Is64Bit, detail::string_view DeviceStepping,
+               void *&CompileToSPIRVHandle, void *&FreeSPIRVOutputsHandle);
+
+  std::vector<byte> compile_impl(const std::string &Source,
+                                 const std::vector<std::string> &UserArgs) {
+    std::vector<sycl::detail::string_view> Args;
+    for (auto &&Arg : UserArgs)
+      Args.emplace_back(Arg);
+
+    return compile_impl(std::string_view{Source}, Args, OutputFormatVersion,
+                        DeviceType, DeviceArch, Is64Bit,
+                        std::string_view{DeviceStepping}, CompileToSPIRVHandle,
+                        FreeSPIRVOutputsHandle);
+  }
+
 public:
   /// Constructs online compiler which can target any device and produces
   /// given compiled code format. Produces 64-bit device code.
@@ -191,9 +223,17 @@ private:
 ///   OpenCL JIT compiler options must be supported.
 template <>
 template <>
-__SYCL_EXPORT std::vector<byte>
-online_compiler<source_language::opencl_c>::compile(
-    const std::string &src, const std::vector<std::string> &options);
+#if !defined(__SYCL_ONLINE_COMPILER_CPP) ||                                    \
+    defined(__INTEL_PREVIEW_BREAKING_CHANGES)
+inline
+#else
+__SYCL_EXPORT
+#endif
+    std::vector<byte>
+    online_compiler<source_language::opencl_c>::compile(
+        const std::string &src, const std::vector<std::string> &options) {
+  return compile_impl(src, options);
+}
 
 /// Compiles the given OpenCL source. May throw \c online_compile_error.
 /// @param src - contents of the source.
@@ -209,8 +249,17 @@ online_compiler<source_language::opencl_c>::compile(const std::string &src) {
 /// @param options - compilation options (implementation defined).
 template <>
 template <>
-__SYCL_EXPORT std::vector<byte> online_compiler<source_language::cm>::compile(
-    const std::string &src, const std::vector<std::string> &options);
+#if !defined(__SYCL_ONLINE_COMPILER_CPP) ||                                    \
+    defined(__INTEL_PREVIEW_BREAKING_CHANGES)
+inline
+#else
+__SYCL_EXPORT
+#endif
+    std::vector<byte>
+    online_compiler<source_language::cm>::compile(
+        const std::string &src, const std::vector<std::string> &options) {
+  return compile_impl(src, options);
+}
 
 /// Compiles the given CM source \p src.
 template <>
@@ -221,5 +270,5 @@ online_compiler<source_language::cm>::compile(const std::string &src) {
 }
 
 } // namespace ext::intel::experimental
-} // __SYCL_INLINE_VER_NAMESPACE(_V1)
+} // namespace _V1
 } // namespace sycl

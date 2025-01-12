@@ -9,7 +9,6 @@
 #include "lldb/Symbol/CompilerType.h"
 
 #include "lldb/Core/Debugger.h"
-#include "lldb/Core/StreamFile.h"
 #include "lldb/Symbol/Type.h"
 #include "lldb/Target/ExecutionContext.h"
 #include "lldb/Target/Process.h"
@@ -22,6 +21,7 @@
 
 #include <iterator>
 #include <mutex>
+#include <optional>
 
 using namespace lldb;
 using namespace lldb_private;
@@ -108,10 +108,24 @@ bool CompilerType::IsConst() const {
   return false;
 }
 
-bool CompilerType::IsCStringType(uint32_t &length) const {
+unsigned CompilerType::GetPtrAuthKey() const {
   if (IsValid())
     if (auto type_system_sp = GetTypeSystem())
-      return type_system_sp->IsCStringType(m_type, length);
+      return type_system_sp->GetPtrAuthKey(m_type);
+  return 0;
+}
+
+unsigned CompilerType::GetPtrAuthDiscriminator() const {
+  if (IsValid())
+    if (auto type_system_sp = GetTypeSystem())
+      return type_system_sp->GetPtrAuthDiscriminator(m_type);
+  return 0;
+}
+
+bool CompilerType::GetPtrAuthAddressDiversity() const {
+  if (IsValid())
+    if (auto type_system_sp = GetTypeSystem())
+      return type_system_sp->GetPtrAuthAddressDiversity(m_type);
   return false;
 }
 
@@ -150,6 +164,13 @@ bool CompilerType::IsFunctionPointerType() const {
   if (IsValid())
     if (auto type_system_sp = GetTypeSystem())
       return type_system_sp->IsFunctionPointerType(m_type);
+  return false;
+}
+
+bool CompilerType::IsMemberFunctionPointerType() const {
+  if (IsValid())
+    if (auto type_system_sp = GetTypeSystem())
+      return type_system_sp->IsMemberFunctionPointerType(m_type);
   return false;
 }
 
@@ -260,6 +281,13 @@ bool CompilerType::IsScalarType() const {
   return false;
 }
 
+bool CompilerType::IsTemplateType() const {
+  if (IsValid())
+    if (auto type_system_sp = GetTypeSystem())
+      return type_system_sp->IsTemplateType(m_type);
+  return false;
+}
+
 bool CompilerType::IsTypedefType() const {
   if (IsValid())
     if (auto type_system_sp = GetTypeSystem())
@@ -295,6 +323,192 @@ bool CompilerType::IsBeingDefined() const {
   return false;
 }
 
+bool CompilerType::IsInteger() const {
+  bool is_signed = false; // May be reset by the call below.
+  return IsIntegerType(is_signed);
+}
+
+bool CompilerType::IsFloat() const {
+  uint32_t count = 0;
+  bool is_complex = false;
+  return IsFloatingPointType(count, is_complex);
+}
+
+bool CompilerType::IsEnumerationType() const {
+  bool is_signed = false; // May be reset by the call below.
+  return IsEnumerationType(is_signed);
+}
+
+bool CompilerType::IsUnscopedEnumerationType() const {
+  return IsEnumerationType() && !IsScopedEnumerationType();
+}
+
+bool CompilerType::IsIntegerOrUnscopedEnumerationType() const {
+  return IsInteger() || IsUnscopedEnumerationType();
+}
+
+bool CompilerType::IsSigned() const {
+  return GetTypeInfo() & lldb::eTypeIsSigned;
+}
+
+bool CompilerType::IsNullPtrType() const {
+  return GetCanonicalType().GetBasicTypeEnumeration() ==
+         lldb::eBasicTypeNullPtr;
+}
+
+bool CompilerType::IsBoolean() const {
+  return GetCanonicalType().GetBasicTypeEnumeration() == lldb::eBasicTypeBool;
+}
+
+bool CompilerType::IsEnumerationIntegerTypeSigned() const {
+  if (IsValid())
+    return GetEnumerationIntegerType().GetTypeInfo() & lldb::eTypeIsSigned;
+
+  return false;
+}
+
+bool CompilerType::IsScalarOrUnscopedEnumerationType() const {
+  return IsScalarType() || IsUnscopedEnumerationType();
+}
+
+bool CompilerType::IsPromotableIntegerType() const {
+  // Unscoped enums are always considered as promotable, even if their
+  // underlying type does not need to be promoted (e.g. "int").
+  if (IsUnscopedEnumerationType())
+    return true;
+
+  switch (GetCanonicalType().GetBasicTypeEnumeration()) {
+  case lldb::eBasicTypeBool:
+  case lldb::eBasicTypeChar:
+  case lldb::eBasicTypeSignedChar:
+  case lldb::eBasicTypeUnsignedChar:
+  case lldb::eBasicTypeShort:
+  case lldb::eBasicTypeUnsignedShort:
+  case lldb::eBasicTypeWChar:
+  case lldb::eBasicTypeSignedWChar:
+  case lldb::eBasicTypeUnsignedWChar:
+  case lldb::eBasicTypeChar16:
+  case lldb::eBasicTypeChar32:
+    return true;
+
+  default:
+    return false;
+  }
+
+  llvm_unreachable("All cases handled above.");
+}
+
+bool CompilerType::IsPointerToVoid() const {
+  if (!IsValid())
+    return false;
+
+  return IsPointerType() &&
+         GetPointeeType().GetBasicTypeEnumeration() == lldb::eBasicTypeVoid;
+}
+
+bool CompilerType::IsRecordType() const {
+  if (!IsValid())
+    return false;
+
+  return GetCanonicalType().GetTypeClass() &
+         (lldb::eTypeClassClass | lldb::eTypeClassStruct |
+          lldb::eTypeClassUnion);
+}
+
+bool CompilerType::IsVirtualBase(CompilerType target_base,
+                                 CompilerType *virtual_base,
+                                 bool carry_virtual) const {
+  if (CompareTypes(target_base))
+    return carry_virtual;
+
+  if (!carry_virtual) {
+    uint32_t num_virtual_bases = GetNumVirtualBaseClasses();
+    for (uint32_t i = 0; i < num_virtual_bases; ++i) {
+      uint32_t bit_offset;
+      auto base = GetVirtualBaseClassAtIndex(i, &bit_offset);
+      if (base.IsVirtualBase(target_base, virtual_base,
+                             /*carry_virtual*/ true)) {
+        if (virtual_base)
+          *virtual_base = base;
+
+        return true;
+      }
+    }
+  }
+
+  uint32_t num_direct_bases = GetNumDirectBaseClasses();
+  for (uint32_t i = 0; i < num_direct_bases; ++i) {
+    uint32_t bit_offset;
+    auto base = GetDirectBaseClassAtIndex(i, &bit_offset);
+    if (base.IsVirtualBase(target_base, virtual_base, carry_virtual))
+      return true;
+  }
+
+  return false;
+}
+
+bool CompilerType::IsContextuallyConvertibleToBool() const {
+  return IsScalarType() || IsUnscopedEnumerationType() || IsPointerType() ||
+         IsNullPtrType() || IsArrayType();
+}
+
+bool CompilerType::IsBasicType() const {
+  return GetCanonicalType().GetBasicTypeEnumeration() !=
+         lldb::eBasicTypeInvalid;
+}
+
+std::string CompilerType::TypeDescription() {
+  auto name = GetTypeName();
+  auto canonical_name = GetCanonicalType().GetTypeName();
+  if (name.IsEmpty() || canonical_name.IsEmpty())
+    return "''"; // Should not happen, unless the input is broken somehow.
+
+  if (name == canonical_name)
+    return llvm::formatv("'{0}'", name);
+
+  return llvm::formatv("'{0}' (canonically referred to as '{1}')", name,
+                       canonical_name);
+}
+
+bool CompilerType::CompareTypes(CompilerType rhs) const {
+  if (*this == rhs)
+    return true;
+
+  const ConstString name = GetFullyUnqualifiedType().GetTypeName();
+  const ConstString rhs_name = rhs.GetFullyUnqualifiedType().GetTypeName();
+  return name == rhs_name;
+}
+
+const char *CompilerType::GetTypeTag() {
+  switch (GetTypeClass()) {
+  case lldb::eTypeClassClass:
+    return "class";
+  case lldb::eTypeClassEnumeration:
+    return "enum";
+  case lldb::eTypeClassStruct:
+    return "struct";
+  case lldb::eTypeClassUnion:
+    return "union";
+  default:
+    return "unknown";
+  }
+  llvm_unreachable("All cases are covered by code above.");
+}
+
+uint32_t CompilerType::GetNumberOfNonEmptyBaseClasses() {
+  uint32_t ret = 0;
+  uint32_t num_direct_bases = GetNumDirectBaseClasses();
+
+  for (uint32_t i = 0; i < num_direct_bases; ++i) {
+    uint32_t bit_offset;
+    CompilerType base_type = GetDirectBaseClassAtIndex(i, &bit_offset);
+    if (base_type.GetNumFields() > 0 ||
+        base_type.GetNumberOfNonEmptyBaseClasses() > 0)
+      ret += 1;
+  }
+  return ret;
+}
+
 // Type Completion
 
 bool CompilerType::GetCompleteType() const {
@@ -323,6 +537,14 @@ ConstString CompilerType::GetDisplayTypeName() const {
   if (IsValid())
     if (auto type_system_sp = GetTypeSystem())
       return type_system_sp->GetDisplayTypeName(m_type);
+  return ConstString("<invalid>");
+}
+
+ConstString CompilerType::GetMangledTypeName() const {
+  if (IsValid()) {
+    if (auto type_system_sp = GetTypeSystem())
+      return type_system_sp->GetMangledTypeName(m_type);
+  }
   return ConstString("<invalid>");
 }
 
@@ -471,6 +693,13 @@ CompilerType CompilerType::GetPointerType() const {
   return CompilerType();
 }
 
+CompilerType CompilerType::AddPtrAuthModifier(uint32_t payload) const {
+  if (IsValid())
+    if (auto type_system_sp = GetTypeSystem())
+      return type_system_sp->AddPtrAuthModifier(m_type, payload);
+  return CompilerType();
+}
+
 CompilerType CompilerType::GetLValueReferenceType() const {
   if (IsValid())
     if (auto type_system_sp = GetTypeSystem())
@@ -540,7 +769,7 @@ CompilerType::GetBasicTypeFromAST(lldb::BasicType basic_type) const {
 }
 // Exploring the type
 
-llvm::Optional<uint64_t>
+std::optional<uint64_t>
 CompilerType::GetBitSize(ExecutionContextScope *exe_scope) const {
   if (IsValid())
     if (auto type_system_sp = GetTypeSystem())
@@ -548,14 +777,15 @@ CompilerType::GetBitSize(ExecutionContextScope *exe_scope) const {
   return {};
 }
 
-llvm::Optional<uint64_t>
+std::optional<uint64_t>
 CompilerType::GetByteSize(ExecutionContextScope *exe_scope) const {
-  if (llvm::Optional<uint64_t> bit_size = GetBitSize(exe_scope))
+  if (std::optional<uint64_t> bit_size = GetBitSize(exe_scope))
     return (*bit_size + 7) / 8;
   return {};
 }
 
-llvm::Optional<size_t> CompilerType::GetTypeBitAlign(ExecutionContextScope *exe_scope) const {
+std::optional<size_t>
+CompilerType::GetTypeBitAlign(ExecutionContextScope *exe_scope) const {
   if (IsValid())
     if (auto type_system_sp = GetTypeSystem())
       return type_system_sp->GetTypeBitAlign(m_type, exe_scope);
@@ -576,13 +806,14 @@ lldb::Format CompilerType::GetFormat() const {
   return lldb::eFormatDefault;
 }
 
-uint32_t CompilerType::GetNumChildren(bool omit_empty_base_classes,
-                                      const ExecutionContext *exe_ctx) const {
+llvm::Expected<uint32_t>
+CompilerType::GetNumChildren(bool omit_empty_base_classes,
+                             const ExecutionContext *exe_ctx) const {
   if (IsValid())
     if (auto type_system_sp = GetTypeSystem())
       return type_system_sp->GetNumChildren(m_type, omit_empty_base_classes,
                                        exe_ctx);
-  return 0;
+  return llvm::createStringError("invalid type");
 }
 
 lldb::BasicType CompilerType::GetBasicTypeEnumeration() const {
@@ -653,6 +884,12 @@ CompilerType::GetVirtualBaseClassAtIndex(size_t idx,
   return CompilerType();
 }
 
+CompilerDecl CompilerType::GetStaticFieldWithName(llvm::StringRef name) const {
+  if (IsValid())
+    return GetTypeSystem()->GetStaticFieldWithName(m_type, name);
+  return CompilerDecl();
+}
+
 uint32_t CompilerType::GetIndexOfFieldWithName(
     const char *name, CompilerType *field_compiler_type_ptr,
     uint64_t *bit_offset_ptr, uint32_t *bitfield_bit_size_ptr,
@@ -672,7 +909,7 @@ uint32_t CompilerType::GetIndexOfFieldWithName(
   return UINT32_MAX;
 }
 
-CompilerType CompilerType::GetChildCompilerTypeAtIndex(
+llvm::Expected<CompilerType> CompilerType::GetChildCompilerTypeAtIndex(
     ExecutionContext *exe_ctx, size_t idx, bool transparent_pointers,
     bool omit_empty_base_classes, bool ignore_array_bounds,
     std::string &child_name, uint32_t &child_byte_size,
@@ -725,14 +962,23 @@ CompilerType CompilerType::GetChildCompilerTypeAtIndex(
 // index 1 is the child index for "m_b" within class A
 
 size_t CompilerType::GetIndexOfChildMemberWithName(
-    const char *name, bool omit_empty_base_classes,
+    llvm::StringRef name, bool omit_empty_base_classes,
     std::vector<uint32_t> &child_indexes) const {
-  if (IsValid() && name && name[0]) {
+  if (IsValid() && !name.empty()) {
     if (auto type_system_sp = GetTypeSystem())
       return type_system_sp->GetIndexOfChildMemberWithName(
         m_type, name, omit_empty_base_classes, child_indexes);
   }
   return 0;
+}
+
+CompilerType
+CompilerType::GetDirectNestedTypeWithName(llvm::StringRef name) const {
+  if (IsValid() && !name.empty()) {
+    if (auto type_system_sp = GetTypeSystem())
+      return type_system_sp->GetDirectNestedTypeWithName(m_type, name);
+  }
+  return CompilerType();
 }
 
 size_t CompilerType::GetNumTemplateArguments(bool expand_pack) const {
@@ -760,12 +1006,12 @@ CompilerType CompilerType::GetTypeTemplateArgument(size_t idx,
   return CompilerType();
 }
 
-llvm::Optional<CompilerType::IntegralTemplateArgument>
+std::optional<CompilerType::IntegralTemplateArgument>
 CompilerType::GetIntegralTemplateArgument(size_t idx, bool expand_pack) const {
   if (IsValid())
     if (auto type_system_sp = GetTypeSystem())
       return type_system_sp->GetIntegralTemplateArgument(m_type, idx, expand_pack);
-  return llvm::None;
+  return std::nullopt;
 }
 
 CompilerType CompilerType::GetTypeForFormatters() const {
@@ -794,31 +1040,17 @@ bool CompilerType::IsMeaninglessWithoutDynamicResolution() const {
 // matches can include base class names.
 
 uint32_t
-CompilerType::GetIndexOfChildWithName(const char *name,
+CompilerType::GetIndexOfChildWithName(llvm::StringRef name,
                                       bool omit_empty_base_classes) const {
-  if (IsValid() && name && name[0]) {
+  if (IsValid() && !name.empty()) {
     if (auto type_system_sp = GetTypeSystem())
       return type_system_sp->GetIndexOfChildWithName(m_type, name,
-                                                  omit_empty_base_classes);
+                                                     omit_empty_base_classes);
   }
   return UINT32_MAX;
 }
 
 // Dumping types
-
-void CompilerType::DumpValue(ExecutionContext *exe_ctx, Stream *s,
-                             lldb::Format format, const DataExtractor &data,
-                             lldb::offset_t data_byte_offset,
-                             size_t data_byte_size, uint32_t bitfield_bit_size,
-                             uint32_t bitfield_bit_offset, bool show_types,
-                             bool show_summary, bool verbose, uint32_t depth) {
-  if (!IsValid())
-    if (auto type_system_sp = GetTypeSystem())
-      type_system_sp->DumpValue(m_type, exe_ctx, s, format, data,
-                                data_byte_offset, data_byte_size,
-                                bitfield_bit_size, bitfield_bit_offset,
-                                show_types, show_summary, verbose, depth);
-}
 
 bool CompilerType::DumpTypeValue(Stream *s, lldb::Format format,
                                  const DataExtractor &data,
@@ -828,20 +1060,10 @@ bool CompilerType::DumpTypeValue(Stream *s, lldb::Format format,
                                  ExecutionContextScope *exe_scope) {
   if (IsValid())
     if (auto type_system_sp = GetTypeSystem())
-      return type_system_sp->DumpTypeValue(m_type, s, format, data, byte_offset,
-                                           byte_size, bitfield_bit_size,
-                                           bitfield_bit_offset, exe_scope);
+      return type_system_sp->DumpTypeValue(
+          m_type, *s, format, data, byte_offset, byte_size, bitfield_bit_size,
+          bitfield_bit_offset, exe_scope);
   return false;
-}
-
-void CompilerType::DumpSummary(ExecutionContext *exe_ctx, Stream *s,
-                               const DataExtractor &data,
-                               lldb::offset_t data_byte_offset,
-                               size_t data_byte_size) {
-  if (IsValid())
-    if (auto type_system_sp = GetTypeSystem())
-      type_system_sp->DumpSummary(m_type, exe_ctx, s, data, data_byte_offset,
-                                  data_byte_size);
 }
 
 void CompilerType::DumpTypeDescription(lldb::DescriptionLevel level) const {
@@ -854,7 +1076,7 @@ void CompilerType::DumpTypeDescription(Stream *s,
                                        lldb::DescriptionLevel level) const {
   if (IsValid())
     if (auto type_system_sp = GetTypeSystem())
-      type_system_sp->DumpTypeDescription(m_type, s, level);
+      type_system_sp->DumpTypeDescription(m_type, *s, level);
 }
 
 #ifndef NDEBUG
@@ -882,7 +1104,7 @@ bool CompilerType::GetValueAsScalar(const lldb_private::DataExtractor &data,
     if (encoding == lldb::eEncodingInvalid || count != 1)
       return false;
 
-    llvm::Optional<uint64_t> byte_size = GetByteSize(exe_scope);
+    std::optional<uint64_t> byte_size = GetByteSize(exe_scope);
     if (!byte_size)
       return false;
     lldb::offset_t offset = data_byte_offset;
@@ -965,6 +1187,18 @@ bool CompilerType::GetValueAsScalar(const lldb_private::DataExtractor &data,
     }
   }
   return false;
+}
+
+CompilerType::CompilerType(CompilerType::TypeSystemSPWrapper type_system,
+                           lldb::opaque_compiler_type_t type)
+    : m_type_system(type_system.GetSharedPointer()), m_type(type) {
+  assert(Verify() && "verification failed");
+}
+
+CompilerType::CompilerType(lldb::TypeSystemWP type_system,
+                           lldb::opaque_compiler_type_t type)
+    : m_type_system(type_system), m_type(type) {
+  assert(Verify() && "verification failed");
 }
 
 #ifndef NDEBUG

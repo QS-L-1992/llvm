@@ -14,6 +14,8 @@
 #include "clang/AST/Decl.h"
 #include "clang/AST/Expr.h"
 #include "clang/Lex/Preprocessor.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/ProgramState.h"
+#include <optional>
 
 namespace clang {
 
@@ -110,8 +112,7 @@ Nullability getNullabilityAnnotation(QualType Type) {
   return Nullability::Unspecified;
 }
 
-llvm::Optional<int> tryExpandAsInteger(StringRef Macro,
-                                       const Preprocessor &PP) {
+std::optional<int> tryExpandAsInteger(StringRef Macro, const Preprocessor &PP) {
   const auto *MacroII = PP.getIdentifierInfo(Macro);
   if (!MacroII)
     return std::nullopt;
@@ -180,6 +181,24 @@ OperatorKind operationKindFromOverloadedOperator(OverloadedOperatorKind OOK,
   default:
     llvm_unreachable("unexpected operator kind");
   }
+}
+
+std::optional<SVal> getPointeeVal(SVal PtrSVal, ProgramStateRef State) {
+  if (const auto *Ptr = PtrSVal.getAsRegion()) {
+    return State->getSVal(Ptr);
+  }
+  return std::nullopt;
+}
+
+bool isWithinStdNamespace(const Decl *D) {
+  const DeclContext *DC = D->getDeclContext();
+  while (DC) {
+    if (const auto *NS = dyn_cast<NamespaceDecl>(DC);
+        NS && NS->isStdNamespace())
+      return true;
+    DC = DC->getParent();
+  }
+  return false;
 }
 
 } // namespace ento

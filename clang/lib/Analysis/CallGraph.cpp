@@ -139,7 +139,7 @@ public:
 
   void VisitIfStmt(IfStmt *If) {
     if (G->shouldSkipConstantExpressions()) {
-      if (llvm::Optional<Stmt *> ActiveStmt =
+      if (std::optional<Stmt *> ActiveStmt =
               If->getNondiscardedCase(G->getASTContext())) {
         if (*ActiveStmt)
           this->Visit(*ActiveStmt);
@@ -148,6 +148,27 @@ public:
     }
 
     StmtVisitor::VisitIfStmt(If);
+  }
+
+  void VisitConstantExpr(ConstantExpr *CE) {
+    if (G->shouldSkipConstantExpressions())
+      return;
+    StmtVisitor::VisitConstantExpr(CE);
+  }
+
+  void VisitDeclStmt(DeclStmt *DS) {
+    if (G->shouldSkipConstantExpressions()) {
+      auto IsConstexprVarDecl = [this](Decl *D) {
+        if (const auto *VD = dyn_cast<VarDecl>(D))
+          return VD->isUsableInConstantExpressions(G->getASTContext());
+        return false;
+      };
+      if (llvm::any_of(DS->decls(), IsConstexprVarDecl)) {
+        return;
+      }
+    }
+
+    StmtVisitor::VisitDeclStmt(DS);
   }
 
   void VisitChildren(Stmt *S) {
@@ -169,6 +190,9 @@ void CallGraph::addNodesForBlocks(DeclContext *D) {
 }
 
 CallGraph::CallGraph() {
+  ShouldWalkTypesOfTypeLocs = false;
+  ShouldVisitTemplateInstantiations = true;
+  ShouldVisitImplicitCode = true;
   Root = getOrInsertNode(nullptr);
 }
 
@@ -190,7 +214,7 @@ bool CallGraph::includeCalleeInGraph(const Decl *D) {
       return false;
 
     IdentifierInfo *II = FD->getIdentifier();
-    if (II && II->getName().startswith("__inline"))
+    if (II && II->getName().starts_with("__inline"))
       return false;
   }
 

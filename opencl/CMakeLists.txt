@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.20.0)
 
 include(FetchContent)
 
@@ -20,8 +20,8 @@ set(OCL_LOADER_REPO
 
 # Repo tags/hashes
 
-set(OCL_HEADERS_TAG dcd5bede6859d26833cd85f0d6bbcee7382dc9b3)
-set(OCL_LOADER_TAG 792682ad3d877ab38573b997808bab3b43902b70)
+set(OCL_HEADERS_TAG 542d7a8f65ecfd88b38de35d8b10aa67b36b33b2)
+set(OCL_LOADER_TAG 804b6f040503c47148bee535230070da6b857ae4)
 
 # OpenCL Headers
 if(NOT OpenCL_HEADERS)
@@ -44,7 +44,7 @@ FetchContent_GetProperties(ocl-headers)
 set(OpenCL_INCLUDE_DIR
   ${ocl-headers_SOURCE_DIR} CACHE PATH "Path to OpenCL Headers")
 
-target_compile_definitions(Headers INTERFACE -DCL_TARGET_OPENCL_VERSION=220)
+target_compile_definitions(Headers INTERFACE -DCL_TARGET_OPENCL_VERSION=300)
 add_library(OpenCL-Headers ALIAS Headers)
 
 # OpenCL Library (ICD Loader)

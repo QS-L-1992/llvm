@@ -1,4 +1,4 @@
-; RUN: opt -hotcoldsplit -hotcoldsplit-threshold=0 -S < %s | FileCheck %s
+; RUN: opt -passes=hotcoldsplit -hotcoldsplit-threshold=0 -S < %s | FileCheck %s
 
 ; Do not outline calls to @llvm.eh.typeid.for. See llvm.org/PR39545.
 
@@ -6,9 +6,9 @@
 
 ; CHECK-LABEL: @fun
 ; CHECK-NOT: call {{.*}}@fun.cold.1
-define void @fun() {
+define void @fun(i1 %arg) {
 entry:
-  br i1 undef, label %if.then, label %if.else
+  br i1 %arg, label %if.then, label %if.else
 
 if.then:
   ret void

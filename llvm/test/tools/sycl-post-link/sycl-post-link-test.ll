@@ -1,4 +1,4 @@
-; RUN: sycl-post-link -split-esimd -lower-esimd -O2 -S %s -o %t.table
+; RUN: sycl-post-link -properties -split-esimd -lower-esimd -O0 -S < %s -o %t.table
 ; RUN: FileCheck %s -input-file=%t_esimd_0.ll
 ; This test checks that IR code below can be successfully processed by
 ; sycl-post-link. In this IR no extractelement instruction and no casting are used
@@ -6,15 +6,54 @@
 target datalayout = "e-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024-n8:16:32:64"
 target triple = "spir64-unknown-unknown"
 
-@__spirv_BuiltInGlobalInvocationId = external dso_local local_unnamed_addr addrspace(1) constant <3 x i64>, align 32
+@__spirv_BuiltInSubgroupLocalInvocationId = external dso_local local_unnamed_addr addrspace(1) constant i32, align 4
+@__spirv_BuiltInSubgroupSize = external dso_local local_unnamed_addr addrspace(1) constant i32, align 4
+@__spirv_BuiltInSubgroupMaxSize = external dso_local local_unnamed_addr addrspace(1) constant i32, align 4
 
 ; Function Attrs: convergent norecurse
-define dso_local spir_kernel void @ESIMD_kernel() #0 !sycl_explicit_simd !3 {
+define dso_local spir_kernel void @kernel_SubgroupLocalInvocationId(ptr addrspace(1) noundef align 8 %_arg_DoNotOptimize, ptr addrspace(1) noundef align 4 %_arg_DoNotOptimize32) #0 !sycl_explicit_simd !3 {
 entry:
-  %0 = load i64, i64 addrspace(1)* getelementptr (<3 x i64>, <3 x i64> addrspace(1)* @__spirv_BuiltInGlobalInvocationId, i64 0, i64 0), align 32
-  %conv = trunc i64 %0 to i32
+  %0 = load i32, ptr addrspace(1) @__spirv_BuiltInSubgroupLocalInvocationId, align 4
+  %conv.i = zext i32 %0 to i64
+  store i64 %conv.i, ptr addrspace(1) %_arg_DoNotOptimize, align 8
+  %add.i = add i32 %0, 3
+  store i32 %add.i, ptr addrspace(1) %_arg_DoNotOptimize32, align 4
   ret void
 }
+; CHECK: %conv.i = zext i32 0 to i64
+; CHECK: store i64 %conv.i, ptr addrspace(1) %_arg_DoNotOptimize, align 8
+; CHECK: %add.i = add i32 0, 3
+; CHECK: store i32 %add.i, ptr addrspace(1) %_arg_DoNotOptimize32, align 4
+
+; Function Attrs: convergent norecurse
+define dso_local spir_kernel void @kernel_SubgroupSize(ptr addrspace(1) noundef align 8 %_arg_DoNotOptimize, ptr addrspace(1) noundef align 4 %_arg_DoNotOptimize32)#0 !sycl_explicit_simd !3{
+entry:
+  %0 = load i32, ptr addrspace(1) @__spirv_BuiltInSubgroupSize, align 4
+  %conv.i = zext i32 %0 to i64
+  store i64 %conv.i, ptr addrspace(1) %_arg_DoNotOptimize, align 8
+  %add.i = add i32 %0, 7
+  store i32 %add.i, ptr addrspace(1) %_arg_DoNotOptimize32, align 4
+  ret void
+}
+; CHECK: %conv.i = zext i32 1 to i64
+; CHECK: store i64 %conv.i, ptr addrspace(1) %_arg_DoNotOptimize, align 8
+; CHECK: %add.i = add i32 1, 7
+; CHECK: store i32 %add.i, ptr addrspace(1) %_arg_DoNotOptimize32, align 4
+
+; Function Attrs: convergent norecurse
+define dso_local spir_kernel void @kernel_SubgroupMaxSize(ptr addrspace(1) noundef align 8 %_arg_DoNotOptimize, ptr addrspace(1) noundef align 4 %_arg_DoNotOptimize32) #0 !sycl_explicit_simd !3 {
+entry:
+  %0 = load i32, ptr addrspace(1) @__spirv_BuiltInSubgroupMaxSize, align 4
+  %conv.i = zext i32 %0 to i64
+  store i64 %conv.i, ptr addrspace(1) %_arg_DoNotOptimize, align 8
+  %add.i = add i32 %0, 9
+  store i32 %add.i, ptr addrspace(1) %_arg_DoNotOptimize32, align 4
+  ret void
+}
+; CHECK: %conv.i = zext i32 1 to i64
+; CHECK: store i64 %conv.i, ptr addrspace(1) %_arg_DoNotOptimize, align 8
+; CHECK: %add.i = add i32 1, 9
+; CHECK: store i32 %add.i, ptr addrspace(1) %_arg_DoNotOptimize32, align 4
 
 attributes #0 = { "sycl-module-id"="a.cpp" }
 
@@ -27,9 +66,4 @@ attributes #0 = { "sycl-module-id"="a.cpp" }
 !2 = !{i32 0, i32 100000}
 !3 = !{}
 
-; CHECK: define dso_local spir_kernel void @ESIMD_kernel()
-; CHECK:   call <3 x i32> @llvm.genx.local.id.v3i32()
-; CHECK:   call <3 x i32> @llvm.genx.local.size.v3i32()
-; CHECK:   call i32 @llvm.genx.group.id.x()
-; CHECK:   ret void
-; CHECK: }
+

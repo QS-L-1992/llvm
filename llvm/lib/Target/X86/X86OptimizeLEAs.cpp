@@ -200,8 +200,7 @@ static inline MemOpKey getMemOpKey(const MachineInstr &MI, unsigned N) {
 
 static inline bool isIdenticalOp(const MachineOperand &MO1,
                                  const MachineOperand &MO2) {
-  return MO1.isIdenticalTo(MO2) &&
-         (!MO1.isReg() || !Register::isPhysicalRegister(MO1.getReg()));
+  return MO1.isIdenticalTo(MO2) && (!MO1.isReg() || !MO1.getReg().isPhysical());
 }
 
 #ifndef NDEBUG
@@ -322,8 +321,7 @@ int X86OptimizeLEAPass::calcInstrDist(const MachineInstr &First,
   // presented in InstrPos.
   assert(Last.getParent() == First.getParent() &&
          "Instructions are in different basic blocks");
-  assert(InstrPos.find(&First) != InstrPos.end() &&
-         InstrPos.find(&Last) != InstrPos.end() &&
+  assert(InstrPos.contains(&First) && InstrPos.contains(&Last) &&
          "Instructions' positions are undefined");
 
   return InstrPos[&Last] - InstrPos[&First];
@@ -743,9 +741,7 @@ bool X86OptimizeLEAPass::runOnMachineFunction(MachineFunction &MF) {
 
     // Remove redundant address calculations. Do it only for -Os/-Oz since only
     // a code size gain is expected from this part of the pass.
-    bool OptForSize = MF.getFunction().hasOptSize() ||
-                      llvm::shouldOptimizeForSize(&MBB, PSI, MBFI);
-    if (OptForSize)
+    if (llvm::shouldOptimizeForSize(&MBB, PSI, MBFI))
       Changed |= removeRedundantAddrCalc(LEAs);
   }
 

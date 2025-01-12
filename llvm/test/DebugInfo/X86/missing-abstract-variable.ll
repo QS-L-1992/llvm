@@ -1,5 +1,5 @@
 ; RUN: %llc_dwarf -mtriple x86_64-gnu-linux -O0 -filetype=obj < %s | llvm-dwarfdump -debug-info - | FileCheck %s
-
+; RUN: %llc_dwarf --try-experimental-debuginfo-iterators -mtriple x86_64-gnu-linux -O0 -filetype=obj < %s | llvm-dwarfdump -debug-info - | FileCheck %s
 ; Build from the following source with clang -O2.
 
 ; The important details are that 'x's abstract definition is first built during
@@ -106,7 +106,7 @@ entry:
   br i1 %u, label %if.then.i, label %_Z1xb.exit, !dbg !34
 
 if.then.i:                                        ; preds = %entry
-  %0 = load i32, i32* @t, align 4, !dbg !35, !tbaa !36
+  %0 = load i32, ptr @t, align 4, !dbg !35, !tbaa !36
   tail call void @llvm.dbg.value(metadata i32 %0, metadata !40, metadata !DIExpression()), !dbg !35
   tail call void @_Z1fi(i32 %0), !dbg !41
   br label %_Z1xb.exit, !dbg !42

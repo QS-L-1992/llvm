@@ -12,41 +12,50 @@ tablegen(LLVM DXILOperation.inc -gen-dxil-operation)
 add_public_tablegen_target(DirectXCommonTableGen)
 
 add_llvm_target(DirectXCodeGen
+  CBufferDataLayout.cpp
   DirectXAsmPrinter.cpp
   DirectXInstrInfo.cpp
   DirectXRegisterInfo.cpp
   DirectXSubtarget.cpp
   DirectXTargetMachine.cpp
+  DirectXTargetTransformInfo.cpp
   DXContainerGlobals.cpp
-  DXILMetadata.cpp
+  DXILDataScalarization.cpp
+  DXILFinalizeLinkage.cpp
+  DXILFlattenArrays.cpp
+  DXILIntrinsicExpansion.cpp
   DXILOpBuilder.cpp
   DXILOpLowering.cpp
   DXILPrepare.cpp
   DXILPrettyPrinter.cpp
   DXILResource.cpp
   DXILResourceAnalysis.cpp
+  DXILResourceAccess.cpp
   DXILShaderFlags.cpp
   DXILTranslateMetadata.cpp
 
   LINK_COMPONENTS
   Analysis
   AsmPrinter
-  Core
   CodeGen
-  SelectionDAG
-  Support
+  CodeGenTypes
+  Core
+  DXILBitWriter
   DirectXDesc
   DirectXInfo
   DirectXPointerTypeAnalysis
-  DXILBitWriter
   FrontendHLSL
   MC
+  ScalarOpts
+  SelectionDAG
+  Support
   Target
+  TargetParser
   TransformUtils
 
   ADD_TO_COMPONENT
   DirectX
-)
+  )
 
 add_subdirectory(MCTargetDesc)
 add_subdirectory(TargetInfo)

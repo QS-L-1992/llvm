@@ -7,41 +7,36 @@
 //===----------------------------------------------------------------------===//
 
 #include <detail/backend_impl.hpp>
+#include <detail/context_impl.hpp>
 #include <detail/event_impl.hpp>
 #include <detail/scheduler/scheduler.hpp>
 #include <sycl/context.hpp>
 #include <sycl/detail/common.hpp>
-#include <sycl/detail/pi.hpp>
+#include <sycl/detail/ur.hpp>
 #include <sycl/event.hpp>
 #include <sycl/info/info_desc.hpp>
-#include <sycl/stl.hpp>
 
 #include <memory>
 #include <unordered_set>
 
 namespace sycl {
-__SYCL_INLINE_VER_NAMESPACE(_V1) {
+inline namespace _V1 {
 
 event::event() : impl(std::make_shared<detail::event_impl>(std::nullopt)) {}
 
 event::event(cl_event ClEvent, const context &SyclContext)
     : impl(std::make_shared<detail::event_impl>(
-          detail::pi::cast<RT::PiEvent>(ClEvent), SyclContext)) {
+          detail::ur::cast<ur_event_handle_t>(ClEvent), SyclContext)) {
   // This is a special interop constructor for OpenCL, so the event must be
   // retained.
-  impl->getPlugin().call<detail::PiApiKind::piEventRetain>(
-      detail::pi::cast<RT::PiEvent>(ClEvent));
+  // TODO(pi2ur): Don't just cast from cl_event above
+  impl->getAdapter()->call<detail::UrApiKind::urEventRetain>(
+      detail::ur::cast<ur_event_handle_t>(ClEvent));
 }
 
 bool event::operator==(const event &rhs) const { return rhs.impl == impl; }
 
 bool event::operator!=(const event &rhs) const { return !(*this == rhs); }
-
-bool event::is_host() const {
-  bool IsHost = impl->is_host();
-  assert(!IsHost && "event::is_host should not be called in implementation.");
-  return IsHost;
-}
 
 void event::wait() { impl->wait(impl); }
 
@@ -77,6 +72,28 @@ event::get_info() const {
   return impl->template get_info<Param>();
 }
 
+template <typename Param>
+typename detail::is_backend_info_desc<Param>::return_type
+event::get_backend_info() const {
+  return impl->get_backend_info<Param>();
+}
+
+template <typename Param>
+typename detail::is_event_profiling_info_desc<Param>::return_type
+event::get_profiling_info() const {
+  if (impl->getCommandGraph()) {
+    throw sycl::exception(make_error_code(errc::invalid),
+                          "Profiling information is unavailable for events "
+                          "returned from a submission to a queue in the "
+                          "recording state.");
+  }
+
+  if constexpr (!std::is_same_v<Param, info::event_profiling::command_submit>) {
+    impl->wait(impl);
+  }
+  return impl->template get_profiling_info<Param>();
+}
+
 #define __SYCL_PARAM_TRAITS_SPEC(DescType, Desc, ReturnT, PiCode)              \
   template __SYCL_EXPORT ReturnT event::get_info<info::event::Desc>() const;
 
@@ -84,26 +101,35 @@ event::get_info() const {
 
 #undef __SYCL_PARAM_TRAITS_SPEC
 
+#define __SYCL_PARAM_TRAITS_SPEC(DescType, Desc, ReturnT, Picode)              \
+  template __SYCL_EXPORT ReturnT                                               \
+  event::get_backend_info<info::DescType::Desc>() const;
+
+#include <sycl/info/sycl_backend_traits.def>
+
+#undef __SYCL_PARAM_TRAITS_SPEC
+
 #define __SYCL_PARAM_TRAITS_SPEC(DescType, Desc, ReturnT, PiCode)              \
-  template <>                                                                  \
-  __SYCL_EXPORT ReturnT event::get_profiling_info<info::DescType::Desc>()      \
-      const {                                                                  \
-    impl->wait(impl);                                                          \
-    return impl->get_profiling_info<info::DescType::Desc>();                   \
-  }
+  template __SYCL_EXPORT ReturnT                                               \
+  event::get_profiling_info<info::DescType::Desc>() const;
 
 #include <sycl/info/event_profiling_traits.def>
 
 #undef __SYCL_PARAM_TRAITS_SPEC
 
-backend event::get_backend() const noexcept { return getImplBackend(impl); }
+backend event::get_backend() const noexcept try {
+  return getImplBackend(impl);
+} catch (std::exception &e) {
+  __SYCL_REPORT_EXCEPTION_TO_STREAM("exception in get_backend", e);
+  std::abort();
+}
 
-pi_native_handle event::getNative() const { return impl->getNative(); }
+ur_native_handle_t event::getNative() const { return impl->getNative(); }
 
-std::vector<pi_native_handle> event::getNativeVector() const {
-  std::vector<pi_native_handle> ReturnVector = {impl->getNative()};
+std::vector<ur_native_handle_t> event::getNativeVector() const {
+  std::vector<ur_native_handle_t> ReturnVector = {impl->getNative()};
   return ReturnVector;
 }
 
-} // __SYCL_INLINE_VER_NAMESPACE(_V1)
+} // namespace _V1
 } // namespace sycl

@@ -619,6 +619,8 @@ public:
   void      setIP(uint32_t value) { _registers.__srr0 = value; }
   uint64_t  getCR() const         { return _registers.__cr; }
   void      setCR(uint32_t value) { _registers.__cr = value; }
+  uint64_t  getLR() const         { return _registers.__lr; }
+  void      setLR(uint32_t value) { _registers.__lr = value; }
 
 private:
   struct ppc_thread_state_t {
@@ -1189,6 +1191,8 @@ public:
   void      setIP(uint64_t value) { _registers.__srr0 = value; }
   uint64_t  getCR() const         { return _registers.__cr; }
   void      setCR(uint64_t value) { _registers.__cr = value; }
+  uint64_t  getLR() const         { return _registers.__lr; }
+  void      setLR(uint64_t value) { _registers.__lr = value; }
 
 private:
   struct ppc64_thread_state_t {
@@ -1811,6 +1815,13 @@ inline const char *Registers_ppc64::getRegisterName(int regNum) {
 /// process.
 class _LIBUNWIND_HIDDEN Registers_arm64;
 extern "C" void __libunwind_Registers_arm64_jumpto(Registers_arm64 *);
+
+#if defined(_LIBUNWIND_USE_GCS)
+extern "C" void *__libunwind_cet_get_jump_target() {
+  return reinterpret_cast<void *>(&__libunwind_Registers_arm64_jumpto);
+}
+#endif
+
 class _LIBUNWIND_HIDDEN Registers_arm64 {
 public:
   Registers_arm64();
@@ -2869,7 +2880,7 @@ inline bool Registers_mips_o32::validRegister(int regNum) const {
     return false;
   if (regNum <= UNW_MIPS_R31)
     return true;
-#if __mips_isa_rev != 6
+#if __mips_isa_rev < 6
   if (regNum == UNW_MIPS_HI)
     return true;
   if (regNum == UNW_MIPS_LO)
@@ -2903,10 +2914,12 @@ inline uint32_t Registers_mips_o32::getRegister(int regNum) const {
     return _registers.__pc;
   case UNW_REG_SP:
     return _registers.__r[29];
+#if __mips_isa_rev < 6
   case UNW_MIPS_HI:
     return _registers.__hi;
   case UNW_MIPS_LO:
     return _registers.__lo;
+#endif
   }
   _LIBUNWIND_ABORT("unsupported mips_o32 register");
 }
@@ -2936,11 +2949,13 @@ inline void Registers_mips_o32::setRegister(int regNum, uint32_t value) {
   case UNW_REG_SP:
     _registers.__r[29] = value;
     return;
+#if __mips_isa_rev < 6
   case UNW_MIPS_HI:
     _registers.__hi = value;
     return;
   case UNW_MIPS_LO:
     _registers.__lo = value;
+#endif
     return;
   }
   _LIBUNWIND_ABORT("unsupported mips_o32 register");
@@ -3120,10 +3135,12 @@ inline const char *Registers_mips_o32::getRegisterName(int regNum) {
     return "$f30";
   case UNW_MIPS_F31:
     return "$f31";
+#if __mips_isa_rev < 6
   case UNW_MIPS_HI:
     return "$hi";
   case UNW_MIPS_LO:
     return "$lo";
+#endif
   default:
     return "unknown register";
   }
@@ -3193,7 +3210,7 @@ inline bool Registers_mips_newabi::validRegister(int regNum) const {
     return false;
   if (regNum <= UNW_MIPS_R31)
     return true;
-#if __mips_isa_rev != 6
+#if __mips_isa_rev < 6
   if (regNum == UNW_MIPS_HI)
     return true;
   if (regNum == UNW_MIPS_LO)
@@ -3212,10 +3229,12 @@ inline uint64_t Registers_mips_newabi::getRegister(int regNum) const {
     return _registers.__pc;
   case UNW_REG_SP:
     return _registers.__r[29];
+#if __mips_isa_rev < 6
   case UNW_MIPS_HI:
     return _registers.__hi;
   case UNW_MIPS_LO:
     return _registers.__lo;
+#endif
   }
   _LIBUNWIND_ABORT("unsupported mips_newabi register");
 }
@@ -3233,12 +3252,14 @@ inline void Registers_mips_newabi::setRegister(int regNum, uint64_t value) {
   case UNW_REG_SP:
     _registers.__r[29] = value;
     return;
+#if __mips_isa_rev < 6
   case UNW_MIPS_HI:
     _registers.__hi = value;
     return;
   case UNW_MIPS_LO:
     _registers.__lo = value;
     return;
+#endif
   }
   _LIBUNWIND_ABORT("unsupported mips_newabi register");
 }
@@ -3417,10 +3438,12 @@ inline const char *Registers_mips_newabi::getRegisterName(int regNum) {
     return "$f30";
   case UNW_MIPS_F31:
     return "$f31";
+#if __mips_isa_rev < 6
   case UNW_MIPS_HI:
     return "$hi";
   case UNW_MIPS_LO:
     return "$lo";
+#endif
   default:
     return "unknown register";
   }
@@ -4085,6 +4108,8 @@ inline bool Registers_riscv::validRegister(int regNum) const {
     return true;
   if (regNum < 0)
     return false;
+  if (regNum == UNW_RISCV_VLENB)
+    return true;
   if (regNum > UNW_RISCV_F31)
     return false;
   return true;
@@ -4099,6 +4124,11 @@ inline reg_t Registers_riscv::getRegister(int regNum) const {
     return 0;
   if ((regNum > 0) && (regNum < 32))
     return _registers[regNum];
+  if (regNum == UNW_RISCV_VLENB) {
+    reg_t vlenb;
+    __asm__("csrr %0, 0xC22" : "=r"(vlenb));
+    return vlenb;
+  }
   _LIBUNWIND_ABORT("unsupported riscv register");
 }
 
@@ -4250,6 +4280,8 @@ inline const char *Registers_riscv::getRegisterName(int regNum) {
     return "ft10";
   case UNW_RISCV_F31:
     return "ft11";
+  case UNW_RISCV_VLENB:
+    return "vlenb";
   default:
     return "unknown register";
   }

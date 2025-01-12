@@ -8,9 +8,10 @@ add_lldb_library(lldbPluginProcessUtility
   LinuxProcMaps.cpp
   LinuxSignals.cpp
   MemoryTagManagerAArch64MTE.cpp
-  MipsLinuxSignals.cpp
   NativeProcessSoftwareSingleStep.cpp
+  NativeRegisterContextDBReg.cpp
   NativeRegisterContextDBReg_arm64.cpp
+  NativeRegisterContextDBReg_loongarch.cpp
   NativeRegisterContextDBReg_x86.cpp
   NativeRegisterContextRegisterInfo.cpp
   NetBSDSignals.cpp
@@ -48,6 +49,8 @@ add_lldb_library(lldbPluginProcessUtility
   RegisterContextThreadMemory.cpp
   RegisterContextWindows_i386.cpp
   RegisterContextWindows_x86_64.cpp
+  RegisterFlagsDetector_arm64.cpp
+  RegisterInfos_x86_64_with_base_shared.cpp
   RegisterInfoPOSIX_arm.cpp
   RegisterInfoPOSIX_arm64.cpp
   RegisterInfoPOSIX_loongarch64.cpp
@@ -65,6 +68,8 @@ add_lldb_library(lldbPluginProcessUtility
     lldbSymbol
     lldbTarget
     lldbUtility
+    lldbValueObject
   LINK_COMPONENTS
     Support
+    TargetParser
   )

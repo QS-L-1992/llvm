@@ -1,6 +1,6 @@
 ! Test how transformational intrinsic function references are lowered
 
-! RUN: bbc -emit-fir %s -o - | FileCheck %s
+! RUN: bbc -emit-fir -hlfir=false %s -o - | FileCheck %s
 
 ! The exact intrinsic being tested does not really matter, what is
 ! tested here is that transformational intrinsics are lowered correctly
@@ -141,7 +141,7 @@ end subroutine
   ! CHECK:         %[[VAL_14:.*]] = fir.alloca !fir.array<6xi32> {bindc_name = "vectorresult", uniq_name = "_QMtest2Fcshift_testEvectorresult"}
   ! CHECK:         %[[VAL_15:.*]] = fir.shape %[[VAL_6]], %[[VAL_7]] : (index, index) -> !fir.shape<2>
   ! CHECK:         %[[VAL_16:.*]] = fir.array_load %[[VAL_8]](%[[VAL_15]]) : (!fir.ref<!fir.array<3x3xi32>>, !fir.shape<2>) -> !fir.array<3x3xi32>
-  ! CHECK:         %[[VAL_17:.*]] = arith.constant -2 : i32
+  ! CHECK:         %[[VAL_17:.*]] = arith.constant 2 : i32
   ! CHECK:         %[[VAL_18:.*]] = fir.shape %[[VAL_3]], %[[VAL_4]] : (index, index) -> !fir.shape<2>
   ! CHECK:         %[[VAL_19:.*]] = fir.embox %[[VAL_5]](%[[VAL_18]]) : (!fir.ref<!fir.array<3x3xi32>>, !fir.shape<2>) -> !fir.box<!fir.array<3x3xi32>>
   ! CHECK:         %[[VAL_20:.*]] = fir.zero_bits !fir.heap<!fir.array<?x?xi32>>
@@ -192,7 +192,7 @@ end subroutine
   ! CHECK:         %[[VAL_63:.*]] = fir.embox %[[VAL_60]](%[[VAL_62]]) : (!fir.heap<!fir.array<?xi32>>, !fir.shape<1>) -> !fir.box<!fir.heap<!fir.array<?xi32>>>
   ! CHECK:         fir.store %[[VAL_63]] to %[[VAL_0]] : !fir.ref<!fir.box<!fir.heap<!fir.array<?xi32>>>>
   ! CHECK:         %[[VAL_64:.*]] = fir.load %[[VAL_1]] : !fir.ref<i32>
-  ! CHECK:         %[[VAL_65:.*]] = fir.address_of(@_QQcl.{{.*}}) : !fir.ref<!fir.char<1,
+  ! CHECK:         %[[VAL_65:.*]] = fir.address_of(@_QQclX{{.*}}) : !fir.ref<!fir.char<1,
   ! CHECK:         %[[VAL_66:.*]] = arith.constant {{[0-9]+}} : i32
   ! CHECK:         %[[VAL_67:.*]] = fir.convert %[[VAL_0]] : (!fir.ref<!fir.box<!fir.heap<!fir.array<?xi32>>>>) -> !fir.ref<!fir.box<none>>
   ! CHECK:         %[[VAL_68:.*]] = fir.convert %[[VAL_59]] : (!fir.box<!fir.array<6xi32>>) -> !fir.box<none>
@@ -224,7 +224,7 @@ subroutine cshift_test()
   integer, dimension(3, 3) :: result
   integer, dimension(6) :: vectorResult
   integer, dimension (6) :: vector
-  result = cshift(array, shift, -2) ! non-vector case
+  result = cshift(array, shift, 2) ! non-vector case
   vectorResult = cshift(vector, 3) ! vector case
 end subroutine cshift_test
 

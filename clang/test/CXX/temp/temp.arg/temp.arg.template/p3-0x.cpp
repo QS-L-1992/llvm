@@ -15,7 +15,7 @@ eval<A<int>> eA;
 eval<B<int, float>> eB;
 eval<C<17>> eC; // expected-error{{implicit instantiation of undefined template 'eval<C<17>>'}}
 eval<D<int, 17>> eD; // expected-error{{implicit instantiation of undefined template 'eval<D<int, 17>>'}}
-eval<E<int, float>> eE; // expected-error{{implicit instantiation of undefined template 'eval<E<int, float, 17>>}}
+eval<E<int, float>> eE; // expected-error{{implicit instantiation of undefined template 'eval<E<int, float>>}}
 
 template<template <int ...N> class TT> struct X0 { }; // expected-note{{previous non-type template parameter with type 'int' is here}}
 template<int I, int J, int ...Rest> struct X0a;
@@ -38,3 +38,13 @@ X1<int, X1a> inst_x1a;
 X1<long, X1b> inst_x1b;
 X1<short, X1c> inst_x1c;
 X1<short, X1d> inst_x1d; // expected-error{{template template argument has different template parameters than its corresponding template template paramete}}
+
+template <int> class X2; // expected-note{{template is declared here}} \
+                         // expected-note{{template is declared here}}
+class X3 : X2<1> {}; // expected-error{{implicit instantiation of undefined template 'X2<1>'}}
+
+template <int> class X4 : X3 {
+  struct {
+    X2<1> e; // expected-error{{implicit instantiation of undefined template 'X2<1>'}}
+  } f;
+};

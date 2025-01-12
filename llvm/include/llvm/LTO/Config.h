@@ -53,14 +53,12 @@ struct Config {
   /// For adding passes that run right before codegen.
   std::function<void(legacy::PassManager &)> PreCodeGenPassesHook;
   std::optional<Reloc::Model> RelocModel = Reloc::PIC_;
-  std::optional<CodeModel::Model> CodeModel = std::nullopt;
-  CodeGenOpt::Level CGOptLevel = CodeGenOpt::Default;
-  CodeGenFileType CGFileType = CGFT_ObjectFile;
+  std::optional<CodeModel::Model> CodeModel;
+  CodeGenOptLevel CGOptLevel = CodeGenOptLevel::Default;
+  CodeGenFileType CGFileType = CodeGenFileType::ObjectFile;
   unsigned OptLevel = 2;
+  bool VerifyEach = false;
   bool DisableVerify = false;
-
-  /// Use the standard optimization pipeline.
-  bool UseDefaultPipeline = false;
 
   /// Flag to indicate that the optimizer should not assume builtins are present
   /// on the target.
@@ -79,10 +77,21 @@ struct Config {
   /// link.
   bool HasWholeProgramVisibility = false;
 
+  /// We're validating that all native vtables have corresponding type infos.
+  bool ValidateAllVtablesHaveTypeInfos = false;
+  /// If all native vtables have corresponding type infos, allow
+  /// usage of RTTI to block devirtualization on types used in native files.
+  bool AllVtablesHaveTypeInfos = false;
+
   /// Always emit a Regular LTO object even when it is empty because no Regular
   /// LTO modules were linked. This option is useful for some build system which
   /// want to know a priori all possible output files.
   bool AlwaysEmitRegularLTOObj = false;
+
+  /// If true, the LTO instance creates copies of the symbol names for LTO::run.
+  /// The lld linker uses string saver to keep symbol names alive and doesn't
+  /// need to create copies, so it can set this field to false.
+  bool KeepSymbolNameCopies = true;
 
   /// Allows non-imported definitions to get the potentially more constraining
   /// visibility from the prevailing definition. FromPrevailing is the default
@@ -153,7 +162,7 @@ struct Config {
   ///                    compilation.
   ///
   /// If threshold option is not specified, it is disabled by default.
-  llvm::Optional<uint64_t> RemarksHotnessThreshold = 0;
+  std::optional<uint64_t> RemarksHotnessThreshold = 0;
 
   /// The format used for serializing remarks (default: YAML).
   std::string RemarksFormat;
@@ -178,14 +187,6 @@ struct Config {
 
   /// Add FSAFDO discriminators.
   bool AddFSDiscriminator = false;
-
-  /// Use opaque pointer types. Used to call LLVMContext::setOpaquePointers
-  /// unless already set by the `-opaque-pointers` commandline option.
-#if ENABLE_OPAQUE_POINTERS
-  bool OpaquePointers = true;
-#else
-  bool OpaquePointers = false;
-#endif
 
   /// If this field is set, LTO will write input file paths and symbol
   /// resolutions here in llvm-lto2 command line flag format. This can be
@@ -302,8 +303,6 @@ struct LTOLLVMContext : LLVMContext {
     enableDebugTypeODRUniquing();
     setDiagnosticHandler(
         std::make_unique<LTOLLVMDiagnosticHandler>(&DiagHandler), true);
-    if (!hasSetOpaquePointersValue())
-      setOpaquePointers(C.OpaquePointers);
   }
   DiagnosticHandlerFunction DiagHandler;
 };

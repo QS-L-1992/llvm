@@ -1,9 +1,9 @@
-// RUN: not llvm-mc -arch=amdgcn -mcpu=gfx601 %s 2>&1 | FileCheck --check-prefixes=GFX6-7,GFX6-8,GFX6-9 --implicit-check-not=error: %s
-// RUN: not llvm-mc -arch=amdgcn -mcpu=gfx701 %s 2>&1 | FileCheck --check-prefixes=GFX6-7,GFX6-8,GFX6-9 --implicit-check-not=error: %s
-// RUN: not llvm-mc -arch=amdgcn -mcpu=gfx801 %s 2>&1 | FileCheck --check-prefixes=GFX6-8,GFX6-9,GFX8-9 --implicit-check-not=error: %s
-// RUN: not llvm-mc -arch=amdgcn -mcpu=gfx900 %s 2>&1 | FileCheck --check-prefixes=GFX6-9,GFX8-9 --implicit-check-not=error: %s
-// RUN: not llvm-mc -arch=amdgcn -mcpu=gfx1010 -mattr=+wavefrontsize32,-wavefrontsize64 %s 2>&1 | FileCheck --check-prefixes=GFX10 --implicit-check-not=error: %s
-// RUN: not llvm-mc -arch=amdgcn -mcpu=gfx1010 -mattr=-wavefrontsize32,+wavefrontsize64 %s 2>&1 | FileCheck --check-prefixes=GFX10 --implicit-check-not=error: %s
+// RUN: not llvm-mc -triple=amdgcn -mcpu=gfx601 %s 2>&1 | FileCheck --check-prefixes=GFX6-7,GFX6-8,GFX6-9 --implicit-check-not=error: %s
+// RUN: not llvm-mc -triple=amdgcn -mcpu=gfx701 %s 2>&1 | FileCheck --check-prefixes=GFX6-7,GFX6-8,GFX6-9 --implicit-check-not=error: %s
+// RUN: not llvm-mc -triple=amdgcn -mcpu=gfx801 %s 2>&1 | FileCheck --check-prefixes=GFX6-8,GFX6-9,GFX8-9 --implicit-check-not=error: %s
+// RUN: not llvm-mc -triple=amdgcn -mcpu=gfx900 %s 2>&1 | FileCheck --check-prefixes=GFX6-9,GFX8-9 --implicit-check-not=error: %s
+// RUN: not llvm-mc -triple=amdgcn -mcpu=gfx1010 -mattr=+wavefrontsize32 %s 2>&1 | FileCheck --check-prefixes=GFX10 --implicit-check-not=error: %s
+// RUN: not llvm-mc -triple=amdgcn -mcpu=gfx1010 -mattr=+wavefrontsize64 %s 2>&1 | FileCheck --check-prefixes=GFX10 --implicit-check-not=error: %s
 
 //===----------------------------------------------------------------------===//
 // ENC_DS.
@@ -291,6 +291,22 @@ v_fmaak_f32 v0, 0xff32, v0, 0x1122
 // GFX10: :[[@LINE-2]]:{{[0-9]+}}: error: only one unique literal operand is allowed
 
 v_fmamk_f32 v0, 0xff32, 0x1122, v0
+// GFX6-9: :[[@LINE-1]]:{{[0-9]+}}: error: instruction not supported on this GPU
+// GFX10: :[[@LINE-2]]:{{[0-9]+}}: error: only one unique literal operand is allowed
+
+v_fmaak_f32 v0, 0xff32, v0, 0
+// GFX6-9: :[[@LINE-1]]:{{[0-9]+}}: error: instruction not supported on this GPU
+// GFX10: :[[@LINE-2]]:{{[0-9]+}}: error: only one unique literal operand is allowed
+
+v_fmaak_f16 v0, 0xff32, v0, 0
+// GFX6-9: :[[@LINE-1]]:{{[0-9]+}}: error: instruction not supported on this GPU
+// GFX10: :[[@LINE-2]]:{{[0-9]+}}: error: only one unique literal operand is allowed
+
+v_fmamk_f32 v0, 0xff32, 1, v0
+// GFX6-9: :[[@LINE-1]]:{{[0-9]+}}: error: instruction not supported on this GPU
+// GFX10: :[[@LINE-2]]:{{[0-9]+}}: error: only one unique literal operand is allowed
+
+v_fmamk_f16 v0, 0xff32, 1, v0
 // GFX6-9: :[[@LINE-1]]:{{[0-9]+}}: error: instruction not supported on this GPU
 // GFX10: :[[@LINE-2]]:{{[0-9]+}}: error: only one unique literal operand is allowed
 

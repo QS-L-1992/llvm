@@ -17,6 +17,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/TargetParser/ARMTargetParser.h"
 
 using namespace clang;
 using namespace clang::targets;
@@ -172,8 +173,7 @@ bool ARMTargetInfo::supportsThumb() const {
 }
 
 bool ARMTargetInfo::supportsThumb2() const {
-  return CPUAttr.equals("6T2") ||
-         (ArchVersion >= 7 && !CPUAttr.equals("8M_BASE"));
+  return CPUAttr == "6T2" || (ArchVersion >= 7 && CPUAttr != "8M_BASE");
 }
 
 StringRef ARMTargetInfo::getCPUAttr() const {
@@ -226,6 +226,10 @@ StringRef ARMTargetInfo::getCPUAttr() const {
     return "9_3A";
   case llvm::ARM::ArchKind::ARMV9_4A:
     return "9_4A";
+  case llvm::ARM::ArchKind::ARMV9_5A:
+    return "9_5A";
+  case llvm::ARM::ArchKind::ARMV9_6A:
+    return "9_6A";
   case llvm::ARM::ArchKind::ARMV8MBaseline:
     return "8M_BASE";
   case llvm::ARM::ArchKind::ARMV8MMainline:
@@ -254,8 +258,11 @@ ARMTargetInfo::ARMTargetInfo(const llvm::Triple &Triple,
                              const TargetOptions &Opts)
     : TargetInfo(Triple), FPMath(FP_Default), IsAAPCS(true), LDREX(0),
       HW_FP(0) {
+  bool IsFreeBSD = Triple.isOSFreeBSD();
   bool IsOpenBSD = Triple.isOSOpenBSD();
   bool IsNetBSD = Triple.isOSNetBSD();
+  bool IsHaiku = Triple.isOSHaiku();
+  bool IsOHOS = Triple.isOHOSFamily();
 
   // FIXME: the isOSBinFormatMachO is a workaround for identifying a Darwin-like
   // environment where size_t is `unsigned long` rather than `unsigned int`
@@ -306,9 +313,12 @@ ARMTargetInfo::ARMTargetInfo(const llvm::Triple &Triple,
     switch (Triple.getEnvironment()) {
     case llvm::Triple::Android:
     case llvm::Triple::GNUEABI:
+    case llvm::Triple::GNUEABIT64:
     case llvm::Triple::GNUEABIHF:
+    case llvm::Triple::GNUEABIHFT64:
     case llvm::Triple::MuslEABI:
     case llvm::Triple::MuslEABIHF:
+    case llvm::Triple::OpenHOS:
       setABI("aapcs-linux");
       break;
     case llvm::Triple::EABIHF:
@@ -321,7 +331,7 @@ ARMTargetInfo::ARMTargetInfo(const llvm::Triple &Triple,
     default:
       if (IsNetBSD)
         setABI("apcs-gnu");
-      else if (IsOpenBSD)
+      else if (IsFreeBSD || IsOpenBSD || IsHaiku || IsOHOS)
         setABI("aapcs-linux");
       else
         setABI("aapcs");
@@ -415,6 +425,7 @@ bool ARMTargetInfo::validateBranchProtection(StringRef Spec, StringRef Arch,
   BPI.SignKey = LangOptions::SignReturnAddressKeyKind::AKey;
 
   BPI.BranchTargetEnforcement = PBP.BranchTargetEnforcement;
+  BPI.BranchProtectionPAuthLR = PBP.BranchProtectionPAuthLR;
   return true;
 }
 
@@ -451,7 +462,7 @@ bool ARMTargetInfo::initFeatureMap(
   }
 
   // get default FPU features
-  unsigned FPUKind = llvm::ARM::getDefaultFPU(CPU, Arch);
+  llvm::ARM::FPUKind FPUKind = llvm::ARM::getDefaultFPU(CPU, Arch);
   llvm::ARM::getFPUFeatures(FPUKind, TargetFeatures);
 
   // get default Extension features
@@ -501,7 +512,7 @@ bool ARMTargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
   SHA2 = 0;
   AES = 0;
   DSP = 0;
-  Unaligned = 1;
+  HasUnalignedAccess = true;
   SoftFloat = false;
   // Note that SoftFloatABI is initialized in our constructor.
   HWDiv = 0;
@@ -512,6 +523,7 @@ bool ARMTargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
   HasFloat16 = true;
   ARMCDECoprocMask = 0;
   HasBFloat16 = false;
+  HasFullBFloat16 = false;
   FPRegsDisabled = false;
 
   // This does not diagnose illegal cases like having both
@@ -567,7 +579,7 @@ bool ARMTargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
         return false;
       }
     } else if (Feature == "+strict-align") {
-      Unaligned = 0;
+      HasUnalignedAccess = false;
     } else if (Feature == "+fp16") {
       HW_FP |= HW_FP_HP;
     } else if (Feature == "+fullfp16") {
@@ -594,6 +606,8 @@ bool ARMTargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
     } else if (Feature == "+pacbti") {
       HasPAC = 1;
       HasBTI = 1;
+    } else if (Feature == "+fullbf16") {
+      HasFullBFloat16 = true;
     }
   }
 
@@ -709,10 +723,9 @@ void ARMTargetInfo::getTargetDefines(const LangOptions &Opts,
   // For bare-metal none-eabi.
   if (getTriple().getOS() == llvm::Triple::UnknownOS &&
       (getTriple().getEnvironment() == llvm::Triple::EABI ||
-       getTriple().getEnvironment() == llvm::Triple::EABIHF)) {
-    Builder.defineMacro("__ELF__");
-    if (Opts.CPlusPlus)
-      Builder.defineMacro("_GNU_SOURCE");
+       getTriple().getEnvironment() == llvm::Triple::EABIHF) &&
+      Opts.CPlusPlus) {
+    Builder.defineMacro("_GNU_SOURCE");
   }
 
   // Target properties.
@@ -775,7 +788,7 @@ void ARMTargetInfo::getTargetDefines(const LangOptions &Opts,
     Builder.defineMacro("__ARM_ARCH_PROFILE", "'" + CPUProfile + "'");
 
   // ACLE 6.4.3 Unaligned access supported in hardware
-  if (Unaligned)
+  if (HasUnalignedAccess)
     Builder.defineMacro("__ARM_FEATURE_UNALIGNED", "1");
 
   // ACLE 6.4.4 LDREX/STREX
@@ -829,6 +842,71 @@ void ARMTargetInfo::getTargetDefines(const LangOptions &Opts,
     Builder.defineMacro("__ARM_ROPI", "1");
   if (Opts.RWPI)
     Builder.defineMacro("__ARM_RWPI", "1");
+
+  // Macros for enabling co-proc intrinsics
+  uint64_t FeatureCoprocBF = 0;
+  switch (ArchKind) {
+  default:
+    break;
+  case llvm::ARM::ArchKind::ARMV4:
+  case llvm::ARM::ArchKind::ARMV4T:
+    // Filter __arm_ldcl and __arm_stcl in acle.h
+    FeatureCoprocBF = isThumb() ? 0 : FEATURE_COPROC_B1;
+    break;
+  case llvm::ARM::ArchKind::ARMV5T:
+    FeatureCoprocBF = isThumb() ? 0 : FEATURE_COPROC_B1 | FEATURE_COPROC_B2;
+    break;
+  case llvm::ARM::ArchKind::ARMV5TE:
+  case llvm::ARM::ArchKind::ARMV5TEJ:
+    if (!isThumb())
+      FeatureCoprocBF =
+          FEATURE_COPROC_B1 | FEATURE_COPROC_B2 | FEATURE_COPROC_B3;
+    break;
+  case llvm::ARM::ArchKind::ARMV6:
+  case llvm::ARM::ArchKind::ARMV6K:
+  case llvm::ARM::ArchKind::ARMV6KZ:
+  case llvm::ARM::ArchKind::ARMV6T2:
+    if (!isThumb() || ArchKind == llvm::ARM::ArchKind::ARMV6T2)
+      FeatureCoprocBF = FEATURE_COPROC_B1 | FEATURE_COPROC_B2 |
+                        FEATURE_COPROC_B3 | FEATURE_COPROC_B4;
+    break;
+  case llvm::ARM::ArchKind::ARMV7A:
+  case llvm::ARM::ArchKind::ARMV7R:
+  case llvm::ARM::ArchKind::ARMV7M:
+  case llvm::ARM::ArchKind::ARMV7S:
+  case llvm::ARM::ArchKind::ARMV7EM:
+    FeatureCoprocBF = FEATURE_COPROC_B1 | FEATURE_COPROC_B2 |
+                      FEATURE_COPROC_B3 | FEATURE_COPROC_B4;
+    break;
+  case llvm::ARM::ArchKind::ARMV8A:
+  case llvm::ARM::ArchKind::ARMV8R:
+  case llvm::ARM::ArchKind::ARMV8_1A:
+  case llvm::ARM::ArchKind::ARMV8_2A:
+  case llvm::ARM::ArchKind::ARMV8_3A:
+  case llvm::ARM::ArchKind::ARMV8_4A:
+  case llvm::ARM::ArchKind::ARMV8_5A:
+  case llvm::ARM::ArchKind::ARMV8_6A:
+  case llvm::ARM::ArchKind::ARMV8_7A:
+  case llvm::ARM::ArchKind::ARMV8_8A:
+  case llvm::ARM::ArchKind::ARMV8_9A:
+  case llvm::ARM::ArchKind::ARMV9A:
+  case llvm::ARM::ArchKind::ARMV9_1A:
+  case llvm::ARM::ArchKind::ARMV9_2A:
+  case llvm::ARM::ArchKind::ARMV9_3A:
+  case llvm::ARM::ArchKind::ARMV9_4A:
+  case llvm::ARM::ArchKind::ARMV9_5A:
+  case llvm::ARM::ArchKind::ARMV9_6A:
+    // Filter __arm_cdp, __arm_ldcl, __arm_stcl in arm_acle.h
+    FeatureCoprocBF = FEATURE_COPROC_B1 | FEATURE_COPROC_B3;
+    break;
+  case llvm::ARM::ArchKind::ARMV8MMainline:
+  case llvm::ARM::ArchKind::ARMV8_1MMainline:
+    FeatureCoprocBF = FEATURE_COPROC_B1 | FEATURE_COPROC_B2 |
+                      FEATURE_COPROC_B3 | FEATURE_COPROC_B4;
+    break;
+  }
+  Builder.defineMacro("__ARM_FEATURE_COPROC",
+                      "0x" + Twine::utohexstr(FeatureCoprocBF));
 
   if (ArchKind == llvm::ARM::ArchKind::XSCALE)
     Builder.defineMacro("__XSCALE__");
@@ -986,36 +1064,38 @@ void ARMTargetInfo::getTargetDefines(const LangOptions &Opts,
   case llvm::ARM::ArchKind::ARMV9_2A:
   case llvm::ARM::ArchKind::ARMV9_3A:
   case llvm::ARM::ArchKind::ARMV9_4A:
+  case llvm::ARM::ArchKind::ARMV9_5A:
+  case llvm::ARM::ArchKind::ARMV9_6A:
     getTargetDefinesARMV83A(Opts, Builder);
     break;
   }
 }
 
-const Builtin::Info ARMTargetInfo::BuiltinInfo[] = {
+static constexpr Builtin::Info BuiltinInfo[] = {
 #define BUILTIN(ID, TYPE, ATTRS)                                               \
-  {#ID, TYPE, ATTRS, nullptr, ALL_LANGUAGES, nullptr},
+  {#ID, TYPE, ATTRS, nullptr, HeaderDesc::NO_HEADER, ALL_LANGUAGES},
 #define LIBBUILTIN(ID, TYPE, ATTRS, HEADER)                                    \
-  {#ID, TYPE, ATTRS, HEADER, ALL_LANGUAGES, nullptr},
+  {#ID, TYPE, ATTRS, nullptr, HeaderDesc::HEADER, ALL_LANGUAGES},
 #define TARGET_BUILTIN(ID, TYPE, ATTRS, FEATURE)                               \
-  {#ID, TYPE, ATTRS, nullptr, ALL_LANGUAGES, FEATURE},
+  {#ID, TYPE, ATTRS, FEATURE, HeaderDesc::NO_HEADER, ALL_LANGUAGES},
 #include "clang/Basic/BuiltinsNEON.def"
 
 #define BUILTIN(ID, TYPE, ATTRS)                                               \
-  {#ID, TYPE, ATTRS, nullptr, ALL_LANGUAGES, nullptr},
+  {#ID, TYPE, ATTRS, nullptr, HeaderDesc::NO_HEADER, ALL_LANGUAGES},
 #define LANGBUILTIN(ID, TYPE, ATTRS, LANG)                                     \
-  {#ID, TYPE, ATTRS, nullptr, LANG, nullptr},
+  {#ID, TYPE, ATTRS, nullptr, HeaderDesc::NO_HEADER, LANG},
 #define LIBBUILTIN(ID, TYPE, ATTRS, HEADER)                                    \
-  {#ID, TYPE, ATTRS, HEADER, ALL_LANGUAGES, nullptr},
+  {#ID, TYPE, ATTRS, nullptr, HeaderDesc::HEADER, ALL_LANGUAGES},
 #define TARGET_BUILTIN(ID, TYPE, ATTRS, FEATURE)                               \
-  {#ID, TYPE, ATTRS, nullptr, ALL_LANGUAGES, FEATURE},
+  {#ID, TYPE, ATTRS, FEATURE, HeaderDesc::NO_HEADER, ALL_LANGUAGES},
 #define TARGET_HEADER_BUILTIN(ID, TYPE, ATTRS, HEADER, LANGS, FEATURE)         \
-  {#ID, TYPE, ATTRS, HEADER, LANGS, FEATURE},
+  {#ID, TYPE, ATTRS, FEATURE, HeaderDesc::HEADER, LANGS},
 #include "clang/Basic/BuiltinsARM.def"
 };
 
 ArrayRef<Builtin::Info> ARMTargetInfo::getTargetBuiltins() const {
-  return llvm::makeArrayRef(BuiltinInfo, clang::ARM::LastTSBuiltin -
-                                             Builtin::FirstTSBuiltin);
+  return llvm::ArrayRef(BuiltinInfo,
+                        clang::ARM::LastTSBuiltin - Builtin::FirstTSBuiltin);
 }
 
 bool ARMTargetInfo::isCLZForZeroUndef() const { return false; }
@@ -1046,7 +1126,7 @@ const char *const ARMTargetInfo::GCCRegNames[] = {
     "q12", "q13", "q14", "q15"};
 
 ArrayRef<const char *> ARMTargetInfo::getGCCRegNames() const {
-  return llvm::makeArrayRef(GCCRegNames);
+  return llvm::ArrayRef(GCCRegNames);
 }
 
 const TargetInfo::GCCRegAlias ARMTargetInfo::GCCRegAliases[] = {
@@ -1059,7 +1139,7 @@ const TargetInfo::GCCRegAlias ARMTargetInfo::GCCRegAliases[] = {
 };
 
 ArrayRef<TargetInfo::GCCRegAlias> ARMTargetInfo::getGCCRegAliases() const {
-  return llvm::makeArrayRef(GCCRegAliases);
+  return llvm::ArrayRef(GCCRegAliases);
 }
 
 bool ARMTargetInfo::validateAsmConstraint(
@@ -1087,7 +1167,7 @@ bool ARMTargetInfo::validateAsmConstraint(
     return true;
   case 'j': // An immediate integer between 0 and 65535 (valid for MOVW)
     // only available in ARMv6T2 and above
-    if (CPUAttr.equals("6T2") || ArchVersion >= 7) {
+    if (CPUAttr == "6T2" || ArchVersion >= 7) {
       Info.setRequiresImmediate(0, 65535);
       return true;
     }
@@ -1223,8 +1303,7 @@ bool ARMTargetInfo::validateConstraintModifier(
   bool isInOut = (Constraint[0] == '+');
 
   // Strip off constraint modifiers.
-  while (Constraint[0] == '=' || Constraint[0] == '+' || Constraint[0] == '&')
-    Constraint = Constraint.substr(1);
+  Constraint = Constraint.ltrim("=+&");
 
   switch (Constraint[0]) {
   default:
@@ -1242,7 +1321,7 @@ bool ARMTargetInfo::validateConstraintModifier(
 
   return true;
 }
-const char *ARMTargetInfo::getClobbers() const {
+std::string_view ARMTargetInfo::getClobbers() const {
   // FIXME: Is this really right?
   return "";
 }
@@ -1404,11 +1483,6 @@ DarwinARMTargetInfo::DarwinARMTargetInfo(const llvm::Triple &Triple,
                                          const TargetOptions &Opts)
     : DarwinTargetInfo<ARMleTargetInfo>(Triple, Opts) {
   HasAlignMac68kSupport = true;
-  // iOS always has 64-bit atomic instructions.
-  // FIXME: This should be based off of the target features in
-  // ARMleTargetInfo.
-  MaxAtomicInlineWidth = 64;
-
   if (Triple.isWatchABI()) {
     // Darwin on iOS uses a variant of the ARM C++ ABI.
     TheCXXABI.set(TargetCXXABI::WatchOS);
@@ -1423,20 +1497,4 @@ void DarwinARMTargetInfo::getOSDefines(const LangOptions &Opts,
                                        const llvm::Triple &Triple,
                                        MacroBuilder &Builder) const {
   getDarwinDefines(Builder, Opts, Triple, PlatformName, PlatformMinVersion);
-}
-
-RenderScript32TargetInfo::RenderScript32TargetInfo(const llvm::Triple &Triple,
-                                                   const TargetOptions &Opts)
-    : ARMleTargetInfo(llvm::Triple("armv7", Triple.getVendorName(),
-                                   Triple.getOSName(),
-                                   Triple.getEnvironmentName()),
-                      Opts) {
-  IsRenderScriptTarget = true;
-  LongWidth = LongAlign = 64;
-}
-
-void RenderScript32TargetInfo::getTargetDefines(const LangOptions &Opts,
-                                                MacroBuilder &Builder) const {
-  Builder.defineMacro("__RENDERSCRIPT__");
-  ARMleTargetInfo::getTargetDefines(Opts, Builder);
 }

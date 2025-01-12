@@ -9,7 +9,6 @@
 #ifndef LLVM_MC_MCPARSER_MCASMPARSER_H
 #define LLVM_MC_MCPARSER_MCASMPARSER_H
 
-#include "llvm/ADT/None.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
@@ -84,11 +83,11 @@ struct InlineAsmIdentifierInfo {
     Var.Type = type;
     Var.Length = size / type;
   }
-  InlineAsmIdentifierInfo() : Kind(IK_Invalid) {}
+  InlineAsmIdentifierInfo() = default;
 
 private:
   // Discriminate using the current kind.
-  IdKind Kind;
+  IdKind Kind = IK_Invalid;
 };
 
 // Generic type information for an assembly object.
@@ -207,7 +206,7 @@ public:
       SmallVectorImpl<std::pair<void *, bool>> &OpDecls,
       SmallVectorImpl<std::string> &Constraints,
       SmallVectorImpl<std::string> &Clobbers, const MCInstrInfo *MII,
-      const MCInstPrinter *IP, MCAsmParserSemaCallback &SI) = 0;
+      MCInstPrinter *IP, MCAsmParserSemaCallback &SI) = 0;
 
   /// Emit a note at the location \p L, with the message \p Msg.
   virtual void Note(SMLoc L, const Twine &Msg,
@@ -237,7 +236,7 @@ public:
 
   bool printPendingErrors() {
     bool rv = !PendingErrors.empty();
-    for (auto Err : PendingErrors) {
+    for (auto &Err : PendingErrors) {
       printError(Err.Loc, Twine(Err.Msg), Err.Range);
     }
     PendingErrors.clear();

@@ -72,18 +72,6 @@ static void addLLCOptArg(const llvm::opt::ArgList &Args,
     CmdArgs.push_back(Args.MakeArgString("-O" + OOpt));
   }
 }
-
-static bool checkSystemForAMDGPU(const ArgList &Args, const AMDGPUToolChain &TC,
-                                 std::string &GPUArch) {
-  if (auto Err = TC.getSystemGPUArch(Args, GPUArch)) {
-    std::string ErrMsg =
-        llvm::formatv("{0}", llvm::fmt_consume(std::move(Err)));
-    TC.getDriver().Diag(diag::err_drv_undetermined_amdgpu_arch) << ErrMsg;
-    return false;
-  }
-
-  return true;
-}
 } // namespace
 
 const char *AMDGCN::OpenMPLinker::constructLLVMLinkCommand(
@@ -132,8 +120,7 @@ const char *AMDGCN::OpenMPLinker::constructLLVMLinkCommand(
   }
 
   AddStaticDeviceLibsLinking(C, *this, JA, Inputs, Args, CmdArgs, "amdgcn",
-                             SubArchName, /*isBitCodeSDL=*/true,
-                             /*postClangLink=*/false);
+                             SubArchName, /*isBitCodeSDL=*/true);
   // Add an intermediate output file.
   CmdArgs.push_back("-o");
   const char *OutputFileName =
@@ -228,17 +215,15 @@ void AMDGCN::OpenMPLinker::ConstructJob(Compilation &C, const JobAction &JA,
   const toolchains::AMDGPUOpenMPToolChain &AMDGPUOpenMPTC =
       static_cast<const toolchains::AMDGPUOpenMPToolChain &>(TC);
 
-  std::string GPUArch = Args.getLastArgValue(options::OPT_march_EQ).str();
-  if (GPUArch.empty()) {
-    if (!checkSystemForAMDGPU(Args, AMDGPUOpenMPTC, GPUArch))
-      return;
-  }
+  StringRef GPUArch = Args.getLastArgValue(options::OPT_march_EQ);
+  assert(!GPUArch.empty() && "Must have an explicit GPU arch.");
 
   // Prefix for temporary file name.
   std::string Prefix;
   for (const auto &II : Inputs)
     if (II.isFilename())
-      Prefix = llvm::sys::path::stem(II.getFilename()).str() + "-" + GPUArch;
+      Prefix =
+          llvm::sys::path::stem(II.getFilename()).str() + "-" + GPUArch.str();
   assert(Prefix.length() && "no linker inputs are files ");
 
   // Each command outputs different files.
@@ -260,7 +245,7 @@ AMDGPUOpenMPToolChain::AMDGPUOpenMPToolChain(const Driver &D,
                                              const ArgList &Args)
     : ROCMToolChain(D, Triple, Args), HostTC(HostTC) {
   // Lookup binaries into the driver directory, this is used to
-  // discover the clang-offload-bundler executable.
+  // discover the 'amdgpu-arch' executable.
   getProgramPaths().push_back(getDriver().Dir);
 }
 
@@ -269,18 +254,8 @@ void AMDGPUOpenMPToolChain::addClangTargetOptions(
     Action::OffloadKind DeviceOffloadingKind) const {
   HostTC.addClangTargetOptions(DriverArgs, CC1Args, DeviceOffloadingKind);
 
-  std::string GPUArch = DriverArgs.getLastArgValue(options::OPT_march_EQ).str();
-  if (GPUArch.empty()) {
-    if (!checkSystemForAMDGPU(DriverArgs, *this, GPUArch))
-      return;
-  }
-
   assert(DeviceOffloadingKind == Action::OFK_OpenMP &&
          "Only OpenMP offloading kinds are supported.");
-
-  CC1Args.push_back("-target-cpu");
-  CC1Args.push_back(DriverArgs.MakeArgStringRef(GPUArch));
-  CC1Args.push_back("-fcuda-is-device");
 
   if (DriverArgs.hasArg(options::OPT_nogpulib))
     return;
@@ -292,10 +267,8 @@ void AMDGPUOpenMPToolChain::addClangTargetOptions(
   }
 
   // Link the bitcode library late if we're using device LTO.
-  if (getDriver().isUsingLTO(/* IsOffload */ true))
+  if (getDriver().isUsingOffloadLTO())
     return;
-
-  addOpenMPDeviceRTL(getDriver(), DriverArgs, CC1Args, GPUArch, getTriple());
 }
 
 llvm::opt::DerivedArgList *AMDGPUOpenMPToolChain::TranslateArgs(
@@ -314,9 +287,19 @@ llvm::opt::DerivedArgList *AMDGPUOpenMPToolChain::TranslateArgs(
         DAL->append(A);
 
     if (!DAL->hasArg(options::OPT_march_EQ)) {
-      std::string Arch = BoundArch.str();
-      if (BoundArch.empty())
-        checkSystemForAMDGPU(Args, *this, Arch);
+      StringRef Arch = BoundArch;
+      if (Arch.empty()) {
+        auto ArchsOrErr = getSystemGPUArchs(Args);
+        if (!ArchsOrErr) {
+          std::string ErrMsg =
+              llvm::formatv("{0}", llvm::fmt_consume(ArchsOrErr.takeError()));
+          getDriver().Diag(diag::err_drv_undetermined_gpu_arch)
+              << llvm::Triple::getArchTypeName(getArch()) << ErrMsg << "-march";
+          Arch = OffloadArchToString(OffloadArch::HIPDefault);
+        } else {
+          Arch = Args.MakeArgString(ArchsOrErr->front());
+        }
+      }
       DAL->AddJoinedArg(nullptr, Opts.getOption(options::OPT_march_EQ), Arch);
     }
 
@@ -343,12 +326,18 @@ Tool *AMDGPUOpenMPToolChain::buildLinker() const {
 
 void AMDGPUOpenMPToolChain::addClangWarningOptions(
     ArgStringList &CC1Args) const {
+  AMDGPUToolChain::addClangWarningOptions(CC1Args);
   HostTC.addClangWarningOptions(CC1Args);
 }
 
 ToolChain::CXXStdlibType
 AMDGPUOpenMPToolChain::GetCXXStdlibType(const ArgList &Args) const {
   return HostTC.GetCXXStdlibType(Args);
+}
+
+void AMDGPUOpenMPToolChain::AddClangCXXStdlibIncludeArgs(
+    const llvm::opt::ArgList &Args, llvm::opt::ArgStringList &CC1Args) const {
+  HostTC.AddClangCXXStdlibIncludeArgs(Args, CC1Args);
 }
 
 void AMDGPUOpenMPToolChain::AddClangSystemIncludeArgs(
@@ -387,7 +376,7 @@ AMDGPUOpenMPToolChain::getDeviceLibs(
   if (Args.hasArg(options::OPT_nogpulib))
     return {};
 
-  if (!RocmInstallation.hasDeviceLibrary()) {
+  if (!RocmInstallation->hasDeviceLibrary()) {
     getDriver().Diag(diag::err_drv_no_rocm_device_lib) << 0;
     return {};
   }

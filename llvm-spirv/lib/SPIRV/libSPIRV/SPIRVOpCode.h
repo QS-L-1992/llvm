@@ -69,9 +69,21 @@ inline bool isAtomicOpCode(Op OpCode) {
          OpCode == OpAtomicFlagTestAndSet || OpCode == OpAtomicFlagClear ||
          isFPAtomicOpCode(OpCode);
 }
+inline bool isAtomicOpCodeUntypedPtrSupported(Op OpCode) {
+  static_assert(OpAtomicLoad < OpAtomicXor, "");
+  return ((unsigned)OpCode >= OpAtomicLoad &&
+          (unsigned)OpCode <= OpAtomicXor) ||
+         isFPAtomicOpCode(OpCode);
+}
+
 inline bool isBinaryOpCode(Op OpCode) {
   return ((unsigned)OpCode >= OpIAdd && (unsigned)OpCode <= OpFMod) ||
-         OpCode == OpDot;
+         OpCode == OpDot || OpCode == OpIAddCarry || OpCode == OpISubBorrow ||
+         OpCode == OpUMulExtended || OpCode == OpSMulExtended;
+}
+
+inline bool isBinaryPtrOpCode(Op OpCode) {
+  return (unsigned)OpCode >= OpPtrEqual && (unsigned)OpCode <= OpPtrDiff;
 }
 
 inline bool isShiftOpCode(Op OpCode) {
@@ -136,6 +148,13 @@ inline bool isGenericNegateOpCode(Op OpCode) {
 
 inline bool isAccessChainOpCode(Op OpCode) {
   return OpCode == OpAccessChain || OpCode == OpInBoundsAccessChain;
+}
+
+inline bool isUntypedAccessChainOpCode(Op OpCode) {
+  return OpCode == OpUntypedAccessChainKHR ||
+         OpCode == OpUntypedInBoundsAccessChainKHR ||
+         OpCode == OpUntypedPtrAccessChainKHR ||
+         OpCode == OpUntypedInBoundsPtrAccessChainKHR;
 }
 
 inline bool hasExecScope(Op OpCode) {
@@ -219,7 +238,11 @@ inline bool isTypeOpCode(Op OpCode) {
   return (OpTypeVoid <= OC && OC <= OpTypePipe) || OC == OpTypePipeStorage ||
          isSubgroupAvcINTELTypeOpCode(OpCode) || OC == OpTypeVmeImageINTEL ||
          isVCOpCode(OpCode) || OC == internal::OpTypeTokenINTEL ||
-         OC == internal::OpTypeJointMatrixINTEL;
+         OC == internal::OpTypeJointMatrixINTEL ||
+         OC == internal::OpTypeJointMatrixINTELv2 ||
+         OC == OpTypeCooperativeMatrixKHR ||
+         OC == internal::OpTypeTaskSequenceINTEL ||
+         OC == OpTypeUntypedPointerKHR;
 }
 
 inline bool isSpecConstantOpCode(Op OpCode) {

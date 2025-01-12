@@ -6,13 +6,13 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements a model runner using Tensorflow C APIs, allowing the
+// This file implements a model runner using TFLite, allowing the
 // loading of a model from a command line option.
 //
 //===----------------------------------------------------------------------===//
 #include "llvm/Analysis/TensorSpec.h"
 #include "llvm/Config/config.h"
-#if defined(LLVM_HAVE_TF_API)
+#if defined(LLVM_HAVE_TFLITE)
 
 #include "llvm/ADT/BitVector.h"
 #include "llvm/Analysis/CallGraph.h"
@@ -23,10 +23,12 @@
 #include "llvm/Analysis/Utils/TFUtils.h"
 #include "llvm/Analysis/Utils/TrainingLogger.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ManagedStatic.h"
 
 #include <vector>
+#include <optional>
 
 using namespace llvm;
 
@@ -92,13 +94,7 @@ struct InlineEvent {
   int64_t Reward = 0;
 };
 
-/// Collect data we may use for training a model, and write it as a textual
-/// Tensorflow SequenceExample
-/// (https://www.tensorflow.org/api_docs/python/tf/train/SequenceExample)
-/// protobuf (https://developers.google.com/protocol-buffers).
-/// Because this is a protobuf, we cannot just stream the events as they come.
-/// Internally, TrainingLogger stores data in column-major format, because that
-/// lines up with how TF SequenceExample represents it.
+/// Collect data we may use for training a model.
 class TrainingLogger final {
 public:
   TrainingLogger(StringRef LogFileName, const ModelUnderTrainingRunner *MUTR);
@@ -106,9 +102,6 @@ public:
   /// Log one inlining event.
   void logInlineEvent(const InlineEvent &Event,
                       const MLModelRunner &ModelRunner);
-
-  /// Print the stored tensors.
-  void print();
 
 private:
   StringRef LogFileName;
@@ -155,7 +148,6 @@ public:
 
   size_t getTotalSizeEstimate();
 
-  virtual ~DevelopmentModeMLInlineAdvisor();
   void updateNativeSizeEstimate(int64_t Change) {
     *CurrentNativeSize += Change;
   }
@@ -168,18 +160,17 @@ public:
   std::unique_ptr<MLInlineAdvice>
   getAdviceFromModel(CallBase &CB, OptimizationRemarkEmitter &ORE) override;
 
-  Optional<size_t> getNativeSizeEstimate(const Function &F) const;
+  std::optional<size_t> getNativeSizeEstimate(const Function &F) const;
 
 private:
   bool isLogging() const { return !!Logger; }
   std::unique_ptr<MLInlineAdvice> getMandatoryAdviceImpl(CallBase &CB) override;
 
-  std::function<bool(CallBase &)> GetDefaultAdvice;
   const bool IsDoingInference;
   std::unique_ptr<TrainingLogger> Logger;
 
-  const Optional<int32_t> InitialNativeSize;
-  Optional<int32_t> CurrentNativeSize;
+  const std::optional<int32_t> InitialNativeSize;
+  std::optional<int32_t> CurrentNativeSize;
 };
 
 /// A variant of MLInlineAdvice that tracks all non-trivial inlining
@@ -189,8 +180,8 @@ public:
   LoggingMLInlineAdvice(DevelopmentModeMLInlineAdvisor *Advisor, CallBase &CB,
                         OptimizationRemarkEmitter &ORE, bool Recommendation,
                         TrainingLogger &Logger,
-                        Optional<size_t> CallerSizeEstimateBefore,
-                        Optional<size_t> CalleeSizeEstimateBefore,
+                        std::optional<size_t> CallerSizeEstimateBefore,
+                        std::optional<size_t> CalleeSizeEstimateBefore,
                         bool DefaultDecision, bool Mandatory = false)
       : MLInlineAdvice(Advisor, CB, ORE, Recommendation), Logger(Logger),
         CallerSizeEstimateBefore(CallerSizeEstimateBefore),
@@ -256,14 +247,13 @@ private:
 
   static const int64_t NoReward = 0;
   TrainingLogger &Logger;
-  const Optional<size_t> CallerSizeEstimateBefore;
-  const Optional<size_t> CalleeSizeEstimateBefore;
+  const std::optional<size_t> CallerSizeEstimateBefore;
+  const std::optional<size_t> CalleeSizeEstimateBefore;
   const int64_t DefaultDecision;
   const int64_t Mandatory;
 };
 
 static const std::vector<TensorSpec> TrainingOnlyFeatures{
-    TensorSpec::createSpec<int64_t>(TFFeedPrefix + "inlining_default", {1}),
     TensorSpec::createSpec<float>(TFFeedPrefix + "discount", {1}),
     TensorSpec::createSpec<float>(TFFeedPrefix + "reward", {1}),
     TensorSpec::createSpec<int32_t>(TFFeedPrefix + "step_type", {1})};
@@ -289,47 +279,50 @@ TrainingLogger::TrainingLogger(StringRef LogFileName,
     append_range(FT, MUTR->extraOutputsForLoggingSpecs());
 
   DefaultDecisionPos = FT.size();
-  FT.push_back(TensorSpec::createSpec<int64_t>(DefaultDecisionName, {1}));
+  FT.push_back(DefaultDecisionSpec);
 
   DecisionPos = FT.size();
-  FT.push_back(TensorSpec::createSpec<int64_t>(DecisionName, {1}));
+  FT.push_back(InlineDecisionSpec);
+  std::error_code EC;
+  auto OS = std::make_unique<raw_fd_ostream>(TrainingLog, EC);
+  if (EC)
+    dbgs() << (EC.message() + ":" + TrainingLog);
 
   L = std::make_unique<Logger>(
-      FT, TensorSpec::createSpec<int64_t>(RewardName, {1}),
+      std::move(OS), FT, TensorSpec::createSpec<int64_t>(RewardName, {1}),
       InlineSizeEstimatorAnalysis::isEvaluatorRequested());
+  L->switchContext("");
 }
 
 /// Log one inlining event.
 void TrainingLogger::logInlineEvent(const InlineEvent &Event,
                                     const MLModelRunner &ModelRunner) {
+  L->startObservation();
   size_t CurrentFeature = 0;
-  for (; CurrentFeature < NumberOfFeatures; ++CurrentFeature) {
-    int64_t F = *ModelRunner.getTensor<int64_t>(CurrentFeature);
-    L->logInt64Value(CurrentFeature, &F);
-  }
+  for (; CurrentFeature < NumberOfFeatures; ++CurrentFeature)
+    L->logTensorValue(CurrentFeature,
+                      reinterpret_cast<const char *>(
+                          ModelRunner.getTensorUntyped(CurrentFeature)));
 
   if (MUTR)
     for (size_t I = 0; I < MUTR->extraOutputsForLoggingSpecs().size(); ++I) {
       const char *RawData =
           reinterpret_cast<const char *>(MUTR->getUntypedExtraOutputValue(I));
-      L->logSpecifiedTensorValue(CurrentFeature, RawData);
+      L->logTensorValue(CurrentFeature, RawData);
       ++CurrentFeature;
     }
 
   assert(CurrentFeature == DefaultDecisionPos);
-  L->logInt64Value(DefaultDecisionPos, &Event.DefaultDecision);
-  L->logInt64Value(DecisionPos, &Event.AdvisedDecision);
+  L->logTensorValue(DefaultDecisionPos,
+                    reinterpret_cast<const char *>(&Event.DefaultDecision));
+  L->logTensorValue(DecisionPos,
+                    reinterpret_cast<const char *>(&Event.AdvisedDecision));
+  L->endObservation();
   if (InlineSizeEstimatorAnalysis::isEvaluatorRequested())
-    L->logInt64Reward(Event.Reward);
+    L->logReward(Event.Reward);
 
   // For debugging / later use
   Effects.push_back(Event.Effect);
-}
-
-void TrainingLogger::print() {
-  std::error_code EC;
-  raw_fd_ostream OutFile(LogFileName, EC);
-  L->flush(OutFile);
 }
 
 DevelopmentModeMLInlineAdvisor::DevelopmentModeMLInlineAdvisor(
@@ -337,8 +330,7 @@ DevelopmentModeMLInlineAdvisor::DevelopmentModeMLInlineAdvisor(
     std::unique_ptr<MLModelRunner> ModelRunner,
     std::function<bool(CallBase &)> GetDefaultAdvice,
     std::unique_ptr<TrainingLogger> Logger)
-    : MLInlineAdvisor(M, MAM, std::move(ModelRunner)),
-      GetDefaultAdvice(GetDefaultAdvice),
+    : MLInlineAdvisor(M, MAM, std::move(ModelRunner), GetDefaultAdvice),
       IsDoingInference(isa<ModelUnderTrainingRunner>(getModelRunner())),
       Logger(std::move(Logger)),
       InitialNativeSize(isLogging() ? getTotalSizeEstimate() : 0),
@@ -347,15 +339,10 @@ DevelopmentModeMLInlineAdvisor::DevelopmentModeMLInlineAdvisor(
   assert(IsDoingInference || isLogging());
 }
 
-DevelopmentModeMLInlineAdvisor::~DevelopmentModeMLInlineAdvisor() {
-  if (isLogging())
-    Logger->print();
-}
-
-Optional<size_t>
+std::optional<size_t>
 DevelopmentModeMLInlineAdvisor::getNativeSizeEstimate(const Function &F) const {
   if (!InlineSizeEstimatorAnalysis::isEvaluatorRequested())
-    return None;
+    return std::nullopt;
   auto &R =
       FAM.getResult<InlineSizeEstimatorAnalysis>(const_cast<Function &>(F));
   if (!R) {
@@ -431,4 +418,4 @@ std::unique_ptr<InlineAdvisor> llvm::getDevelopmentModeAdvisor(
   return std::make_unique<DevelopmentModeMLInlineAdvisor>(
       M, MAM, std::move(Runner), GetDefaultAdvice, std::move(Logger));
 }
-#endif // defined(LLVM_HAVE_TF_API)
+#endif // defined(LLVM_HAVE_TFLITE)

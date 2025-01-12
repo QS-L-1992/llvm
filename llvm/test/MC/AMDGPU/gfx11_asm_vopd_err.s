@@ -1,4 +1,4 @@
-// RUN: not llvm-mc -arch=amdgcn -mcpu=gfx1100 %s 2>&1 | FileCheck %s -check-prefix=GFX11 --implicit-check-not=error: --strict-whitespace
+// RUN: not llvm-mc -triple=amdgcn -mcpu=gfx1100 %s 2>&1 | FileCheck %s -check-prefix=GFX11 --implicit-check-not=error: --strict-whitespace
 
 //===----------------------------------------------------------------------===//
 // A VOPD instruction can use only one literal.
@@ -38,6 +38,31 @@ v_dual_fmamk_f32    v122, 0xdeadbeef, 0xdeadbeef, v161 ::  v_dual_fmamk_f32  v12
 // GFX11: :[[@LINE-1]]:{{[0-9]+}}: error: only one unique literal operand is allowed
 // GFX11-NEXT:{{^}}v_dual_fmamk_f32    v122, 0xdeadbeef, 0xdeadbeef, v161 ::  v_dual_fmamk_f32  v123, s0, 0x1234, v162
 // GFX11-NEXT:{{^}}                          ^
+
+//===----------------------------------------------------------------------===//
+// Check that KImm operands are counted as literals
+// even if they look like inline constants.
+//===----------------------------------------------------------------------===//
+
+v_dual_fmamk_f32    v122, v74, 0, v161           ::  v_dual_lshlrev_b32  v247, 0xbabe, v99
+// GFX11: :[[@LINE-1]]:{{[0-9]+}}: error: only one unique literal operand is allowed
+// GFX11-NEXT:{{^}}v_dual_fmamk_f32    v122, v74, 0, v161           ::  v_dual_lshlrev_b32  v247, 0xbabe, v99
+// GFX11-NEXT:{{^}}                                                                               ^
+
+v_dual_add_f32      v5, 0xaf123456, v2           ::  v_dual_fmaak_f32     v6, v3, v1, 1.0
+// GFX11: :[[@LINE-1]]:{{[0-9]+}}: error: only one unique literal operand is allowed
+// GFX11-NEXT:{{^}}v_dual_add_f32      v5, 0xaf123456, v2           ::  v_dual_fmaak_f32     v6, v3, v1, 1.0
+// GFX11-NEXT:{{^}}                        ^
+
+v_dual_fmamk_f32    v122, 0xdeadbeef, 2, v161    ::  v_dual_fmamk_f32  v123, s0, 1, v162
+// GFX11: :[[@LINE-1]]:{{[0-9]+}}: error: only one unique literal operand is allowed
+// GFX11-NEXT:{{^}}v_dual_fmamk_f32    v122, 0xdeadbeef, 2, v161    ::  v_dual_fmamk_f32  v123, s0, 1, v162
+// GFX11-NEXT:{{^}}                          ^
+
+v_dual_fmamk_f32    v122, v1, 2, v161            ::  v_dual_fmamk_f32  v123, s0, 1, v162
+// GFX11: :[[@LINE-1]]:{{[0-9]+}}: error: only one unique literal operand is allowed
+// GFX11-NEXT:{{^}}v_dual_fmamk_f32    v122, v1, 2, v161            ::  v_dual_fmamk_f32  v123, s0, 1, v162
+// GFX11-NEXT:{{^}}                                                                                 ^
 
 //===----------------------------------------------------------------------===//
 // Check that assembler detects a different literal regardless of its location.

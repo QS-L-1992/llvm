@@ -58,7 +58,7 @@ bool CSKYAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
 #include "CSKYGenCompressInstEmitter.inc"
 void CSKYAsmPrinter::EmitToStreamer(MCStreamer &S, const MCInst &Inst) {
   MCInst CInst;
-  bool Res = compressInst(CInst, Inst, *Subtarget, OutStreamer->getContext());
+  bool Res = compressInst(CInst, Inst, *Subtarget);
   if (Res)
     ++CSKYNumInstrsCompressed;
   AsmPrinter::EmitToStreamer(*OutStreamer, Res ? CInst : Inst);
@@ -145,8 +145,10 @@ void CSKYAsmPrinter::emitInstruction(const MachineInstr *MI) {
                                        getSubtargetInfo().getFeatureBits());
 
   // Do any auto-generated pseudo lowerings.
-  if (emitPseudoExpansionLowering(*OutStreamer, MI))
+  if (MCInst OutInst; lowerPseudoInstExpansion(MI, OutInst)) {
+    EmitToStreamer(*OutStreamer, OutInst);
     return;
+  }
 
   // If we just ended a constant pool, mark it as such.
   if (InConstantPool && MI->getOpcode() != CSKY::CONSTPOOL_ENTRY) {

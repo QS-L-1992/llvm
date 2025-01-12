@@ -15,6 +15,8 @@ LLVM and API reference documentation.
    BranchWeightMetadata
    Bugpoint
    CommandGuide/index
+   ConvergenceAndUniformity
+   ConvergentOperations
    Coroutines
    DependenceGraphs/index
    ExceptionHandling
@@ -37,6 +39,7 @@ LLVM and API reference documentation.
    PDB/index
    PointerAuth
    ScudoHardenedAllocator
+   MemoryModelRelaxationAnnotations
    MemTagSanitizer
    Security
    SecurityTransparencyReports
@@ -49,6 +52,7 @@ LLVM and API reference documentation.
    TestingGuide
    TransformMetadata
    TypeMetadata
+   UndefinedBehavior
    XRay
    XRayExample
    XRayFDRFormat
@@ -117,6 +121,9 @@ LLVM IR
   Defines the LLVM intermediate representation and the assembly form of the
   different nodes.
 
+:doc:`Undefined Behavior (UB) <UndefinedBehavior>`
+  A guide on what UB/undef/poison are and when to use each one.
+
 :doc:`InAlloca`
   Description of the ``inalloca`` argument attribute.
 
@@ -129,6 +136,9 @@ LLVM IR
 
 :doc:`GlobalISel/index`
   This describes the prototype instruction selection replacement, GlobalISel.
+
+:doc:`ConvergentOperations`
+  Description of ``convergent`` operation semantics and related intrinsics.
 
 =====================
 Testing and Debugging
@@ -189,6 +199,9 @@ Additional Topics
 :doc:`ScudoHardenedAllocator`
   A library that implements a security-hardened `malloc()`.
 
+:doc:`MemoryModelRelaxationAnnotations`
+  Target-defined relaxation to LLVM's concurrency model.
+
 :doc:`MemTagSanitizer`
   Security hardening for production code aiming to mitigate memory
   related vulnerabilities. Based on the Armv8.5-A Memory Tagging Extension.
@@ -219,3 +232,7 @@ Additional Topics
 
 :doc:`YamlIO`
    A reference guide for using LLVM's YAML I/O library.
+
+:doc:`ConvergenceAndUniformity`
+   A description of uniformity analysis in the presence of irreducible
+   control flow, and its implementation.

@@ -77,29 +77,48 @@ std::optional<Expr<SomeType>> NonPointerInitializationExpr(const Symbol &,
 // specification expressions.
 
 template <typename A>
-void CheckSpecificationExpr(
-    const A &, const semantics::Scope &, FoldingContext &);
-extern template void CheckSpecificationExpr(
-    const Expr<SomeType> &x, const semantics::Scope &, FoldingContext &);
-extern template void CheckSpecificationExpr(
-    const Expr<SomeInteger> &x, const semantics::Scope &, FoldingContext &);
+void CheckSpecificationExpr(const A &, const semantics::Scope &,
+    FoldingContext &, bool forElementalFunctionResult);
+extern template void CheckSpecificationExpr(const Expr<SomeType> &x,
+    const semantics::Scope &, FoldingContext &,
+    bool forElementalFunctionResult);
+extern template void CheckSpecificationExpr(const Expr<SomeInteger> &x,
+    const semantics::Scope &, FoldingContext &,
+    bool forElementalFunctionResult);
 extern template void CheckSpecificationExpr(const Expr<SubscriptInteger> &x,
-    const semantics::Scope &, FoldingContext &);
+    const semantics::Scope &, FoldingContext &,
+    bool forElementalFunctionResult);
 extern template void CheckSpecificationExpr(
     const std::optional<Expr<SomeType>> &x, const semantics::Scope &,
-    FoldingContext &);
+    FoldingContext &, bool forElementalFunctionResult);
 extern template void CheckSpecificationExpr(
     const std::optional<Expr<SomeInteger>> &x, const semantics::Scope &,
-    FoldingContext &);
+    FoldingContext &, bool forElementalFunctionResult);
 extern template void CheckSpecificationExpr(
     const std::optional<Expr<SubscriptInteger>> &x, const semantics::Scope &,
-    FoldingContext &);
+    FoldingContext &, bool forElementalFunctionResult);
 
 // Contiguity & "simple contiguity" (9.5.4)
 template <typename A>
 std::optional<bool> IsContiguous(const A &, FoldingContext &);
 extern template std::optional<bool> IsContiguous(
     const Expr<SomeType> &, FoldingContext &);
+extern template std::optional<bool> IsContiguous(
+    const ArrayRef &, FoldingContext &);
+extern template std::optional<bool> IsContiguous(
+    const Substring &, FoldingContext &);
+extern template std::optional<bool> IsContiguous(
+    const Component &, FoldingContext &);
+extern template std::optional<bool> IsContiguous(
+    const ComplexPart &, FoldingContext &);
+extern template std::optional<bool> IsContiguous(
+    const CoarrayRef &, FoldingContext &);
+extern template std::optional<bool> IsContiguous(
+    const Symbol &, FoldingContext &);
+static inline std::optional<bool> IsContiguous(
+    const SymbolRef &s, FoldingContext &c) {
+  return IsContiguous(s.get(), c);
+}
 template <typename A>
 bool IsSimplyContiguous(const A &x, FoldingContext &context) {
   return IsContiguous(x, context).value_or(false);

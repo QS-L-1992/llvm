@@ -1,22 +1,29 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.20.0)
 
-set(XPTI_VERSION 0.4.1)
+set(XPTI_VERSION 1.0.0)
 
 project (xptifw VERSION "${XPTI_VERSION}" LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 
 set(XPTIFW_DIR ${CMAKE_CURRENT_LIST_DIR})
+set(SAMPLES_DIR ${CMAKE_CURRENT_LIST_DIR}/samples)
+
 # The XPTI framework requires the includes from
 # the proxy implementation of XPTI
-set(XPTI_DIR ${CMAKE_CURRENT_LIST_DIR}/../xpti)
-
-# Create a soft option for enabling the use of TBB
-option(XPTI_ENABLE_TBB "Enable TBB in the framework" OFF)
+if (NOT DEFINED XPTI_DIR) # don't overwrite if already set
+  if (NOT DEFINED XPTI_SOURCE_DIR)
+    # If XPTI_SOURCE_DIR is not provided then assume that xpti is in-tree and not external.
+    set(XPTI_DIR ${CMAKE_CURRENT_LIST_DIR}/../xpti)
+  else()
+    set(XPTI_DIR ${XPTI_SOURCE_DIR}/../xpti)
+  endif()
+endif()
 
 option(XPTI_ENABLE_WERROR OFF)
 option(XPTI_BUILD_SAMPLES OFF)
 option(XPTI_BUILD_BENCHMARK OFF)
 option(XPTI_ENABLE_STATISTICS OFF)
+option(XPTI_ENABLE_TESTS ON)
 
 if (XPTI_ENABLE_WERROR)
   if(MSVC)
@@ -53,20 +60,25 @@ set(LIBRARY_OUTPUT_PATH ${CMAKE_BINARY_DIR})
 
 add_subdirectory(src)
 
+set(xptifw_lib xptifw)
+string(TOLOWER "${CMAKE_BUILD_TYPE}" build_type_lower)
+if (WIN32 AND "${build_type_lower}" MATCHES "debug")
+  set(xptifw_lib xptifwd)
+endif()
+
 add_custom_target(check-xptifw)
 
-add_subdirectory(unit_test)
+if (XPTI_ENABLE_TESTS)
+  add_subdirectory(unit_test)
+endif()
+
 if (XPTI_BUILD_SAMPLES)
   add_subdirectory(samples/basic_collector)
   add_subdirectory(samples/syclpi_collector)
+  add_subdirectory(samples/sycl_perf_collector)
+  add_subdirectory(basic_test)
 endif()
 
 if (XPTI_BUILD_BENCHMARK)
   add_subdirectory(benchmark)
-endif()
-
-# The tests in basic_test are written using TBB, so these tests are enabled
-# only if TBB has been enabled.
-if (XPTI_ENABLE_TBB)
-  add_subdirectory(basic_test)
 endif()

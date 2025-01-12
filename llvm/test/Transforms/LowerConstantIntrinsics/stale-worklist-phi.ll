@@ -1,4 +1,4 @@
-; RUN: opt -lower-constant-intrinsics -S < %s | FileCheck %s
+; RUN: opt -passes=lower-constant-intrinsics -S < %s | FileCheck %s
 
 ; This is a reproducer for a heap-use-after-free bug that occurred due to trying
 ; to process a PHI node that was removed in a preceding worklist iteration. The
@@ -13,7 +13,7 @@
 
 %s = type { [2 x i16] }
 
-define fastcc void @foo(ptr %p) unnamed_addr {
+define fastcc void @foo(ptr %p, i1 %arg) unnamed_addr {
 entry:
   %0 = tail call i32 @llvm.objectsize.i32.p0(ptr %p, i1 false, i1 false, i1 false) #2
   %1 = icmp ne i32 %0, 0
@@ -24,7 +24,7 @@ for.cond:                                         ; preds = %entry
   br label %cont.i
 
 cont.i:                                           ; preds = %for.cond
-  br i1 undef, label %cont2.i, label %cont2.thread.i
+  br i1 %arg, label %cont2.i, label %cont2.thread.i
 
 cont2.thread.i:                                   ; preds = %cont.i
   br label %handler.type_mismatch3.i

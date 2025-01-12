@@ -11,13 +11,17 @@ unittest("GlobalISelTests") {
     "//llvm/lib/Support",
     "//llvm/lib/Target",
     "//llvm/lib/Target:TargetsToBuild",
+    "//llvm/lib/TargetParser",
   ]
   sources = [
     "CSETest.cpp",
+    "CallLowering.cpp",
     "ConstantFoldingTest.cpp",
+    "GIMatchTableExecutorTest.cpp",
     "GISelAliasTest.cpp",
     "GISelMITest.cpp",
     "GISelUtilsTest.cpp",
+    "InstructionSelectTest.cpp",
     "KnownBitsTest.cpp",
     "KnownBitsVectorTest.cpp",
     "LegalizerHelperTest.cpp",

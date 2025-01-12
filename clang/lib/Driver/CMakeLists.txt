@@ -8,6 +8,7 @@ set(LLVM_LINK_COMPONENTS
   Option
   ProfileData
   Support
+  TargetParser
   WindowsDriver
   )
 
@@ -18,7 +19,7 @@ endif()
 
 # This must be in sync with llvm/sycl/CMakeLists.txt.
 SET_SOURCE_FILES_PROPERTIES( ToolChains/MSVC.cpp ToolChains/Clang.cpp
-  PROPERTIES COMPILE_DEFINITIONS SYCL_MAJOR_VERSION="6" )
+  PROPERTIES COMPILE_DEFINITIONS SYCL_MAJOR_VERSION="8" )
 
 add_clang_library(clangDriver
   Action.cpp
@@ -28,6 +29,7 @@ add_clang_library(clangDriver
   DriverOptions.cpp
   Job.cpp
   Multilib.cpp
+  MultilibBuilder.cpp
   OffloadBundler.cpp
   OptionUtils.cpp
   Phases.cpp
@@ -47,15 +49,12 @@ add_clang_library(clangDriver
   ToolChains/Arch/VE.cpp
   ToolChains/Arch/X86.cpp
   ToolChains/AIX.cpp
-  ToolChains/Ananas.cpp
   ToolChains/AMDGPU.cpp
   ToolChains/AMDGPUOpenMP.cpp
   ToolChains/AVR.cpp
   ToolChains/BareMetal.cpp
   ToolChains/Clang.cpp
-  ToolChains/CloudABI.cpp
   ToolChains/CommonArgs.cpp
-  ToolChains/Contiki.cpp
   ToolChains/CrossWindows.cpp
   ToolChains/CSKYToolChain.cpp
   ToolChains/Cuda.cpp
@@ -75,18 +74,19 @@ add_clang_library(clangDriver
   ToolChains/Linux.cpp
   ToolChains/MipsLinux.cpp
   ToolChains/MinGW.cpp
-  ToolChains/Minix.cpp
   ToolChains/MSP430.cpp
   ToolChains/MSVC.cpp
-  ToolChains/Myriad.cpp
   ToolChains/NaCl.cpp
   ToolChains/NetBSD.cpp
+  ToolChains/OHOS.cpp
   ToolChains/OpenBSD.cpp
   ToolChains/PS4CPU.cpp
   ToolChains/RISCVToolchain.cpp
   ToolChains/Solaris.cpp
   ToolChains/SPIRV.cpp
+  ToolChains/SPIRVOpenMP.cpp
   ToolChains/TCE.cpp
+  ToolChains/UEFI.cpp
   ToolChains/VEToolchain.cpp
   ToolChains/WebAssembly.cpp
   ToolChains/XCore.cpp
@@ -100,6 +100,10 @@ add_clang_library(clangDriver
 
   DEPENDS
   ClangDriverOptions
+  DeviceConfigFile
+  # These generated headers are included transitively.
+  ARMTargetParserTableGen
+  AArch64TargetParserTableGen
 
   LINK_LIBS
   clangBasic

@@ -1,13 +1,13 @@
 ; REQUIRES: asserts
-; RUN: opt -hotcoldsplit -debug-only=hotcoldsplit -hotcoldsplit-threshold=2 -S < %s -o /dev/null 2>&1 | FileCheck %s
+; RUN: opt -passes=hotcoldsplit -debug-only=hotcoldsplit -hotcoldsplit-threshold=2 -S < %s -o /dev/null 2>&1 | FileCheck %s
 
 declare void @sink() cold
 
 @g = global i32 0
 
-define i32 @foo(i32 %arg) {
+define i32 @foo(i32 %arg, i1 %arg2) {
 entry:
-  br i1 undef, label %cold, label %exit
+  br i1 %arg2, label %cold, label %exit
 
 cold:
   ; CHECK: Applying penalty for splitting: 2

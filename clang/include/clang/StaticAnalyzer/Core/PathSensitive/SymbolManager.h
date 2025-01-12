@@ -18,12 +18,14 @@
 #include "clang/AST/Type.h"
 #include "clang/Analysis/AnalysisDeclContext.h"
 #include "clang/Basic/LLVM.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/APSIntPtr.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/MemRegion.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/StoreRef.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/SymExpr.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/FoldingSet.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/Allocator.h"
 #include <cassert>
 
@@ -409,9 +411,7 @@ protected:
     return 1;
   }
 
-  static const llvm::APSInt *getPointer(const llvm::APSInt &Value) {
-    return &Value;
-  }
+  static const llvm::APSInt *getPointer(APSIntPtr Value) { return Value.get(); }
   static const SymExpr *getPointer(const SymExpr *Value) { return Value; }
 
   static void dumpToStreamImpl(raw_ostream &os, const SymExpr *Value);
@@ -467,11 +467,11 @@ public:
 };
 
 /// Represents a symbolic expression like 'x' + 3.
-using SymIntExpr = BinarySymExprImpl<const SymExpr *, const llvm::APSInt &,
+using SymIntExpr = BinarySymExprImpl<const SymExpr *, APSIntPtr,
                                      SymExpr::Kind::SymIntExprKind>;
 
 /// Represents a symbolic expression like 3 - 'x'.
-using IntSymExpr = BinarySymExprImpl<const llvm::APSInt &, const SymExpr *,
+using IntSymExpr = BinarySymExprImpl<APSIntPtr, const SymExpr *,
                                      SymExpr::Kind::IntSymExprKind>;
 
 /// Represents a symbolic expression like 'x' + 'y'.
@@ -536,15 +536,14 @@ public:
                                   QualType From, QualType To);
 
   const SymIntExpr *getSymIntExpr(const SymExpr *lhs, BinaryOperator::Opcode op,
-                                  const llvm::APSInt& rhs, QualType t);
+                                  APSIntPtr rhs, QualType t);
 
   const SymIntExpr *getSymIntExpr(const SymExpr &lhs, BinaryOperator::Opcode op,
-                                  const llvm::APSInt& rhs, QualType t) {
+                                  APSIntPtr rhs, QualType t) {
     return getSymIntExpr(&lhs, op, rhs, t);
   }
 
-  const IntSymExpr *getIntSymExpr(const llvm::APSInt& lhs,
-                                  BinaryOperator::Opcode op,
+  const IntSymExpr *getIntSymExpr(APSIntPtr lhs, BinaryOperator::Opcode op,
                                   const SymExpr *rhs, QualType t);
 
   const SymSymExpr *getSymSymExpr(const SymExpr *lhs, BinaryOperator::Opcode op,
@@ -631,10 +630,9 @@ public:
   /// symbol marking has occurred, i.e. in the MarkLiveSymbols callback.
   void markInUse(SymbolRef sym);
 
-  using region_iterator = RegionSetTy::const_iterator;
-
-  region_iterator region_begin() const { return LiveRegionRoots.begin(); }
-  region_iterator region_end() const { return LiveRegionRoots.end(); }
+  llvm::iterator_range<RegionSetTy::const_iterator> regions() const {
+    return LiveRegionRoots;
+  }
 
   /// Returns whether or not a symbol has been confirmed dead.
   ///
@@ -671,6 +669,11 @@ public:
   SymbolVisitor() = default;
   SymbolVisitor(const SymbolVisitor &) = default;
   SymbolVisitor(SymbolVisitor &&) {}
+
+  // The copy and move assignment operator is defined as deleted pending further
+  // motivation.
+  SymbolVisitor &operator=(const SymbolVisitor &) = delete;
+  SymbolVisitor &operator=(SymbolVisitor &&) = delete;
 
   /// A visitor method invoked by ProgramStateManager::scanReachableSymbols.
   ///
