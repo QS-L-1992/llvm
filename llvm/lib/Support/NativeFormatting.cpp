@@ -11,7 +11,6 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Format.h"
-#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cmath>
@@ -58,10 +57,7 @@ static void write_unsigned_impl(raw_ostream &S, T N, size_t MinDigits,
   static_assert(std::is_unsigned_v<T>, "Value is not unsigned!");
 
   char NumberBuffer[128];
-  std::memset(NumberBuffer, '0', sizeof(NumberBuffer));
-
-  size_t Len = 0;
-  Len = format_to_buffer(N, NumberBuffer);
+  size_t Len = format_to_buffer(N, NumberBuffer);
 
   if (IsNegative)
     S << '-';
@@ -136,12 +132,12 @@ void llvm::write_integer(raw_ostream &S, long long N, size_t MinDigits,
 }
 
 void llvm::write_hex(raw_ostream &S, uint64_t N, HexPrintStyle Style,
-                     Optional<size_t> Width) {
+                     std::optional<size_t> Width) {
   const size_t kMaxWidth = 128u;
 
   size_t W = std::min(kMaxWidth, Width.value_or(0u));
 
-  unsigned Nibbles = (64 - countLeadingZeros(N) + 3) / 4;
+  unsigned Nibbles = (llvm::bit_width(N) + 3) / 4;
   bool Prefix = (Style == HexPrintStyle::PrefixLower ||
                  Style == HexPrintStyle::PrefixUpper);
   bool Upper =
@@ -166,7 +162,7 @@ void llvm::write_hex(raw_ostream &S, uint64_t N, HexPrintStyle Style,
 }
 
 void llvm::write_double(raw_ostream &S, double N, FloatStyle Style,
-                        Optional<size_t> Precision) {
+                        std::optional<size_t> Precision) {
   size_t Prec = Precision.value_or(getDefaultPrecision(Style));
 
   if (std::isnan(N)) {

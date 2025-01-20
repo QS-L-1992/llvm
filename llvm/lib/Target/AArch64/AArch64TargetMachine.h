@@ -15,22 +15,25 @@
 
 #include "AArch64InstrInfo.h"
 #include "AArch64Subtarget.h"
+#include "llvm/CodeGen/CodeGenTargetMachineImpl.h"
 #include "llvm/IR/DataLayout.h"
-#include "llvm/Target/TargetMachine.h"
 #include <optional>
 
 namespace llvm {
 
-class AArch64TargetMachine : public LLVMTargetMachine {
+class AArch64TargetMachine : public CodeGenTargetMachineImpl {
 protected:
   std::unique_ptr<TargetLoweringObjectFile> TLOF;
   mutable StringMap<std::unique_ptr<AArch64Subtarget>> SubtargetMap;
+
+  /// Reset internal state.
+  void reset() override;
 
 public:
   AArch64TargetMachine(const Target &T, const Triple &TT, StringRef CPU,
                        StringRef FS, const TargetOptions &Options,
                        std::optional<Reloc::Model> RM,
-                       std::optional<CodeModel::Model> CM, CodeGenOpt::Level OL,
+                       std::optional<CodeModel::Model> CM, CodeGenOptLevel OL,
                        bool JIT, bool IsLittleEndian);
 
   ~AArch64TargetMachine() override;
@@ -43,11 +46,17 @@ public:
   // Pass Pipeline Configuration
   TargetPassConfig *createPassConfig(PassManagerBase &PM) override;
 
+  void registerPassBuilderCallbacks(PassBuilder &PB) override;
+
   TargetTransformInfo getTargetTransformInfo(const Function &F) const override;
 
   TargetLoweringObjectFile* getObjFileLowering() const override {
     return TLOF.get();
   }
+
+  MachineFunctionInfo *
+  createMachineFunctionInfo(BumpPtrAllocator &Allocator, const Function &F,
+                            const TargetSubtargetInfo *STI) const override;
 
   yaml::MachineFunctionInfo *createDefaultFuncInfoYAML() const override;
   yaml::MachineFunctionInfo *
@@ -76,8 +85,8 @@ public:
   AArch64leTargetMachine(const Target &T, const Triple &TT, StringRef CPU,
                          StringRef FS, const TargetOptions &Options,
                          std::optional<Reloc::Model> RM,
-                         std::optional<CodeModel::Model> CM,
-                         CodeGenOpt::Level OL, bool JIT);
+                         std::optional<CodeModel::Model> CM, CodeGenOptLevel OL,
+                         bool JIT);
 };
 
 // AArch64 big endian target machine.
@@ -89,8 +98,8 @@ public:
   AArch64beTargetMachine(const Target &T, const Triple &TT, StringRef CPU,
                          StringRef FS, const TargetOptions &Options,
                          std::optional<Reloc::Model> RM,
-                         std::optional<CodeModel::Model> CM,
-                         CodeGenOpt::Level OL, bool JIT);
+                         std::optional<CodeModel::Model> CM, CodeGenOptLevel OL,
+                         bool JIT);
 };
 
 } // end namespace llvm

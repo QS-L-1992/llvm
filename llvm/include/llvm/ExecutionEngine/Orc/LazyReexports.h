@@ -19,6 +19,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ExecutionEngine/Orc/Core.h"
 #include "llvm/ExecutionEngine/Orc/IndirectionUtils.h"
+#include "llvm/ExecutionEngine/Orc/RedirectionManager.h"
 #include "llvm/ExecutionEngine/Orc/Speculation.h"
 
 namespace llvm {
@@ -38,19 +39,19 @@ namespace orc {
 class LazyCallThroughManager {
 public:
   using NotifyResolvedFunction =
-      unique_function<Error(JITTargetAddress ResolvedAddr)>;
+      unique_function<Error(ExecutorAddr ResolvedAddr)>;
 
-  LazyCallThroughManager(ExecutionSession &ES,
-                         JITTargetAddress ErrorHandlerAddr, TrampolinePool *TP);
+  LazyCallThroughManager(ExecutionSession &ES, ExecutorAddr ErrorHandlerAddr,
+                         TrampolinePool *TP);
 
   // Return a free call-through trampoline and bind it to look up and call
   // through to the given symbol.
-  Expected<JITTargetAddress>
+  Expected<ExecutorAddr>
   getCallThroughTrampoline(JITDylib &SourceJD, SymbolStringPtr SymbolName,
                            NotifyResolvedFunction NotifyResolved);
 
   void resolveTrampolineLandingAddress(
-      JITTargetAddress TrampolineAddr,
+      ExecutorAddr TrampolineAddr,
       TrampolinePool::NotifyLandingResolvedFunction NotifyLandingResolved);
 
   virtual ~LazyCallThroughManager() = default;
@@ -64,20 +65,19 @@ protected:
     SymbolStringPtr SymbolName;
   };
 
-  JITTargetAddress reportCallThroughError(Error Err);
-  Expected<ReexportsEntry> findReexport(JITTargetAddress TrampolineAddr);
-  Error notifyResolved(JITTargetAddress TrampolineAddr,
-                       JITTargetAddress ResolvedAddr);
+  ExecutorAddr reportCallThroughError(Error Err);
+  Expected<ReexportsEntry> findReexport(ExecutorAddr TrampolineAddr);
+  Error notifyResolved(ExecutorAddr TrampolineAddr, ExecutorAddr ResolvedAddr);
   void setTrampolinePool(TrampolinePool &TP) { this->TP = &TP; }
 
 private:
-  using ReexportsMap = std::map<JITTargetAddress, ReexportsEntry>;
+  using ReexportsMap = std::map<ExecutorAddr, ReexportsEntry>;
 
-  using NotifiersMap = std::map<JITTargetAddress, NotifyResolvedFunction>;
+  using NotifiersMap = std::map<ExecutorAddr, NotifyResolvedFunction>;
 
   std::mutex LCTMMutex;
   ExecutionSession &ES;
-  JITTargetAddress ErrorHandlerAddr;
+  ExecutorAddr ErrorHandlerAddr;
   TrampolinePool *TP = nullptr;
   ReexportsMap Reexports;
   NotifiersMap Notifiers;
@@ -86,15 +86,15 @@ private:
 /// A lazy call-through manager that builds trampolines in the current process.
 class LocalLazyCallThroughManager : public LazyCallThroughManager {
 private:
-  using NotifyTargetResolved = unique_function<void(JITTargetAddress)>;
+  using NotifyTargetResolved = unique_function<void(ExecutorAddr)>;
 
   LocalLazyCallThroughManager(ExecutionSession &ES,
-                              JITTargetAddress ErrorHandlerAddr)
+                              ExecutorAddr ErrorHandlerAddr)
       : LazyCallThroughManager(ES, ErrorHandlerAddr, nullptr) {}
 
   template <typename ORCABI> Error init() {
     auto TP = LocalTrampolinePool<ORCABI>::Create(
-        [this](JITTargetAddress TrampolineAddr,
+        [this](ExecutorAddr TrampolineAddr,
                TrampolinePool::NotifyLandingResolvedFunction
                    NotifyLandingResolved) {
           resolveTrampolineLandingAddress(TrampolineAddr,
@@ -116,7 +116,7 @@ public:
   /// createLocalLazyCallThroughManager.
   template <typename ORCABI>
   static Expected<std::unique_ptr<LocalLazyCallThroughManager>>
-  Create(ExecutionSession &ES, JITTargetAddress ErrorHandlerAddr) {
+  Create(ExecutionSession &ES, ExecutorAddr ErrorHandlerAddr) {
     auto LLCTM = std::unique_ptr<LocalLazyCallThroughManager>(
         new LocalLazyCallThroughManager(ES, ErrorHandlerAddr));
 
@@ -131,7 +131,7 @@ public:
 /// session.
 Expected<std::unique_ptr<LazyCallThroughManager>>
 createLocalLazyCallThroughManager(const Triple &T, ExecutionSession &ES,
-                                  JITTargetAddress ErrorHandlerAddr);
+                                  ExecutorAddr ErrorHandlerAddr);
 
 /// A materialization unit that builds lazy re-exports. These are callable
 /// entry points that call through to the given symbols.
@@ -141,7 +141,7 @@ createLocalLazyCallThroughManager(const Triple &T, ExecutionSession &ES,
 class LazyReexportsMaterializationUnit : public MaterializationUnit {
 public:
   LazyReexportsMaterializationUnit(LazyCallThroughManager &LCTManager,
-                                   IndirectStubsManager &ISManager,
+                                   RedirectableSymbolManager &RSManager,
                                    JITDylib &SourceJD,
                                    SymbolAliasMap CallableAliases,
                                    ImplSymbolMap *SrcJDLoc);
@@ -155,7 +155,7 @@ private:
   extractFlags(const SymbolAliasMap &Aliases);
 
   LazyCallThroughManager &LCTManager;
-  IndirectStubsManager &ISManager;
+  RedirectableSymbolManager &RSManager;
   JITDylib &SourceJD;
   SymbolAliasMap CallableAliases;
   ImplSymbolMap *AliaseeTable;
@@ -166,11 +166,80 @@ private:
 /// first call. All subsequent calls will go directly to the aliasee.
 inline std::unique_ptr<LazyReexportsMaterializationUnit>
 lazyReexports(LazyCallThroughManager &LCTManager,
-              IndirectStubsManager &ISManager, JITDylib &SourceJD,
+              RedirectableSymbolManager &RSManager, JITDylib &SourceJD,
               SymbolAliasMap CallableAliases,
               ImplSymbolMap *SrcJDLoc = nullptr) {
   return std::make_unique<LazyReexportsMaterializationUnit>(
-      LCTManager, ISManager, SourceJD, std::move(CallableAliases), SrcJDLoc);
+      LCTManager, RSManager, SourceJD, std::move(CallableAliases), SrcJDLoc);
+}
+
+class LazyReexportsManager : public ResourceManager {
+
+  friend std::unique_ptr<MaterializationUnit>
+  lazyReexports(LazyReexportsManager &, SymbolAliasMap);
+
+public:
+  using OnTrampolinesReadyFn = unique_function<void(
+      Expected<std::vector<ExecutorSymbolDef>> EntryAddrs)>;
+  using EmitTrampolinesFn =
+      unique_function<void(ResourceTrackerSP RT, size_t NumTrampolines,
+                           OnTrampolinesReadyFn OnTrampolinesReady)>;
+
+  /// Create a LazyReexportsManager that uses the ORC runtime for reentry.
+  /// This will work both in-process and out-of-process.
+  static Expected<std::unique_ptr<LazyReexportsManager>>
+  Create(EmitTrampolinesFn EmitTrampolines, RedirectableSymbolManager &RSMgr,
+         JITDylib &PlatformJD);
+
+  LazyReexportsManager(LazyReexportsManager &&) = delete;
+  LazyReexportsManager &operator=(LazyReexportsManager &&) = delete;
+
+  Error handleRemoveResources(JITDylib &JD, ResourceKey K) override;
+  void handleTransferResources(JITDylib &JD, ResourceKey DstK,
+                               ResourceKey SrcK) override;
+
+private:
+  struct CallThroughInfo {
+    SymbolStringPtr Name;
+    SymbolStringPtr BodyName;
+    JITDylibSP JD;
+  };
+
+  class MU;
+  class Plugin;
+
+  using ResolveSendResultFn =
+      unique_function<void(Expected<ExecutorSymbolDef>)>;
+
+  LazyReexportsManager(EmitTrampolinesFn EmitTrampolines,
+                       RedirectableSymbolManager &RSMgr, JITDylib &PlatformJD,
+                       Error &Err);
+
+  std::unique_ptr<MaterializationUnit>
+  createLazyReexports(SymbolAliasMap Reexports);
+
+  void emitReentryTrampolines(std::unique_ptr<MaterializationResponsibility> MR,
+                              SymbolAliasMap Reexports);
+  void emitRedirectableSymbols(
+      std::unique_ptr<MaterializationResponsibility> MR,
+      SymbolAliasMap Reexports,
+      Expected<std::vector<ExecutorSymbolDef>> ReentryPoints);
+  void resolve(ResolveSendResultFn SendResult, ExecutorAddr ReentryStubAddr);
+
+  ExecutionSession &ES;
+  EmitTrampolinesFn EmitTrampolines;
+  RedirectableSymbolManager &RSMgr;
+
+  DenseMap<ResourceKey, std::vector<ExecutorAddr>> KeyToReentryAddrs;
+  DenseMap<ExecutorAddr, CallThroughInfo> CallThroughs;
+};
+
+/// Define lazy-reexports based on the given SymbolAliasMap. Each lazy re-export
+/// is a callable symbol that will look up and dispatch to the given aliasee on
+/// first call. All subsequent calls will go directly to the aliasee.
+inline std::unique_ptr<MaterializationUnit>
+lazyReexports(LazyReexportsManager &LRM, SymbolAliasMap Reexports) {
+  return LRM.createLazyReexports(std::move(Reexports));
 }
 
 } // End namespace orc

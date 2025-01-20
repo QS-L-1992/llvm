@@ -8,20 +8,27 @@
 
 #pragma once
 
-#include <sycl/accessor.hpp>
-#include <sycl/buffer.hpp>
-#include <sycl/context.hpp>
-#include <sycl/detail/defines_elementary.hpp>
-#include <sycl/device.hpp>
-#include <sycl/event.hpp>
-#include <sycl/ext/oneapi/weak_object.hpp>
-#include <sycl/kernel.hpp>
-#include <sycl/kernel_bundle.hpp>
-#include <sycl/platform.hpp>
-#include <sycl/queue.hpp>
+#include <sycl/access/access.hpp>                 // for access_mode
+#include <sycl/accessor.hpp>                      // for host_acce...
+#include <sycl/accessor.hpp>                      // for accessor
+#include <sycl/context.hpp>                       // for context
+#include <sycl/device.hpp>                        // for device
+#include <sycl/event.hpp>                         // for event
+#include <sycl/ext/oneapi/experimental/graph.hpp> // for command_graph
+#include <sycl/ext/oneapi/weak_object.hpp>        // for weak_object
+#include <sycl/kernel.hpp>                        // for kernel
+#include <sycl/kernel_bundle_enums.hpp>           // for bundle_state
+#include <sycl/platform.hpp>                      // for platform
+#include <sycl/properties/image_properties.hpp>   // for sampled_i...
+#include <sycl/queue.hpp>                         // for queue
+#include <sycl/stream.hpp>                        // for stream
 
 namespace sycl {
-__SYCL_INLINE_VER_NAMESPACE(_V1) {
+inline namespace _V1 {
+class kernel_id;
+template <bundle_state State> class kernel_bundle;
+template <bundle_state State> class device_image;
+
 namespace ext::oneapi {
 
 namespace detail {
@@ -61,6 +68,8 @@ struct owner_less<kernel_id> : public detail::owner_less_base<kernel_id> {};
 template <>
 struct owner_less<platform> : public detail::owner_less_base<platform> {};
 template <> struct owner_less<queue> : public detail::owner_less_base<queue> {};
+template <>
+struct owner_less<stream> : public detail::owner_less_base<stream> {};
 
 template <bundle_state State>
 struct owner_less<device_image<State>>
@@ -73,6 +82,15 @@ struct owner_less<kernel_bundle<State>>
 template <typename DataT, int Dimensions, typename AllocatorT>
 struct owner_less<buffer<DataT, Dimensions, AllocatorT>>
     : public detail::owner_less_base<buffer<DataT, Dimensions, AllocatorT>> {};
+
+template <int Dimensions, typename AllocatorT>
+struct owner_less<unsampled_image<Dimensions, AllocatorT>>
+    : public detail::owner_less_base<unsampled_image<Dimensions, AllocatorT>> {
+};
+
+template <int Dimensions, typename AllocatorT>
+struct owner_less<sampled_image<Dimensions, AllocatorT>>
+    : public detail::owner_less_base<sampled_image<Dimensions, AllocatorT>> {};
 
 template <typename DataT, int Dimensions, access_mode AccessMode,
           target AccessTarget, access::placeholder isPlaceholder>
@@ -87,13 +105,35 @@ struct owner_less<host_accessor<DataT, Dimensions, AccessMode>>
           host_accessor<DataT, Dimensions, AccessMode>> {};
 
 template <typename DataT, int Dimensions>
-struct owner_less<host_accessor<DataT, Dimensions>>
-    : public detail::owner_less_base<host_accessor<DataT, Dimensions>> {};
-
-template <typename DataT, int Dimensions>
 struct owner_less<local_accessor<DataT, Dimensions>>
     : public detail::owner_less_base<local_accessor<DataT, Dimensions>> {};
 
+template <typename DataT, int Dimensions, access_mode AccessMode,
+          image_target AccessTarget>
+struct owner_less<
+    unsampled_image_accessor<DataT, Dimensions, AccessMode, AccessTarget>>
+    : public detail::owner_less_base<unsampled_image_accessor<
+          DataT, Dimensions, AccessMode, AccessTarget>> {};
+
+template <typename DataT, int Dimensions, access_mode AccessMode>
+struct owner_less<host_unsampled_image_accessor<DataT, Dimensions, AccessMode>>
+    : public detail::owner_less_base<
+          host_unsampled_image_accessor<DataT, Dimensions, AccessMode>> {};
+
+template <typename DataT, int Dimensions, image_target AccessTarget>
+struct owner_less<sampled_image_accessor<DataT, Dimensions, AccessTarget>>
+    : public detail::owner_less_base<
+          sampled_image_accessor<DataT, Dimensions, AccessTarget>> {};
+
+template <typename DataT, int Dimensions>
+struct owner_less<host_sampled_image_accessor<DataT, Dimensions>>
+    : public detail::owner_less_base<
+          host_sampled_image_accessor<DataT, Dimensions>> {};
+
+template <experimental::graph_state State>
+struct owner_less<experimental::command_graph<State>>
+    : public detail::owner_less_base<experimental::command_graph<State>> {};
+
 } // namespace ext::oneapi
-} // __SYCL_INLINE_VER_NAMESPACE(_V1)
+} // namespace _V1
 } // namespace sycl

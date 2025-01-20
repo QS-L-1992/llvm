@@ -15,7 +15,6 @@
 #define MLIR_IR_LOCATION_H
 
 #include "mlir/IR/Attributes.h"
-#include "mlir/IR/SubElementInterfaces.h"
 #include "llvm/Support/PointerLikeTypeTraits.h"
 
 namespace mlir {
@@ -33,7 +32,10 @@ class LocationAttr : public Attribute {
 public:
   using Attribute::Attribute;
 
-  /// Walk all of the locations nested under, and including, the current.
+  /// Walk all of the locations nested directly under, and including, the
+  /// current. This means that if a location is nested under a non-location
+  /// attribute, it will *not* be walked by this method. This walk is performed
+  /// in pre-order to get this behavior.
   WalkResult walk(function_ref<WalkResult(Location)> walkFn);
 
   /// Return an instance of the given location type if one is nested under the
@@ -79,14 +81,17 @@ public:
 
   /// Type casting utilities on the underlying location.
   template <typename U>
+  [[deprecated("Use mlir::isa<U>() instead")]]
   bool isa() const {
     return llvm::isa<U>(*this);
   }
   template <typename U>
+  [[deprecated("Use mlir::dyn_cast<U>() instead")]]
   U dyn_cast() const {
     return llvm::dyn_cast<U>(*this);
   }
   template <typename U>
+  [[deprecated("Use mlir::cast<U>() instead")]]
   U cast() const {
     return llvm::cast<U>(*this);
   }
@@ -131,6 +136,11 @@ inline ::llvm::hash_code hash_value(Location arg) {
 // Tablegen Attribute Declarations
 //===----------------------------------------------------------------------===//
 
+// Forward declaration for class created later.
+namespace mlir::detail {
+struct FileLineColRangeAttrStorage;
+} // namespace mlir::detail
+
 #define GET_ATTRDEF_CLASSES
 #include "mlir/IR/BuiltinLocationAttributes.h.inc"
 
@@ -149,14 +159,40 @@ public:
 
   /// Return the metadata associated with this fused location.
   MetadataT getMetadata() const {
-    return FusedLoc::getMetadata().template cast<MetadataT>();
+    return llvm::cast<MetadataT>(FusedLoc::getMetadata());
   }
 
   /// Support llvm style casting.
   static bool classof(Attribute attr) {
-    auto fusedLoc = attr.dyn_cast<FusedLoc>();
-    return fusedLoc && fusedLoc.getMetadata().isa_and_nonnull<MetadataT>();
+    auto fusedLoc = llvm::dyn_cast<FusedLoc>(attr);
+    return fusedLoc && mlir::isa_and_nonnull<MetadataT>(fusedLoc.getMetadata());
   }
+};
+
+//===----------------------------------------------------------------------===//
+// FileLineColLoc
+//===----------------------------------------------------------------------===//
+
+/// An instance of this location represents a tuple of file, line number, and
+/// column number. This is similar to the type of location that you get from
+/// most source languages.
+///
+/// FileLineColLoc is a FileLineColRange with exactly one line and column.
+class FileLineColLoc : public FileLineColRange {
+public:
+  using FileLineColRange::FileLineColRange;
+
+  static FileLineColLoc get(StringAttr filename, unsigned line,
+                            unsigned column);
+  static FileLineColLoc get(MLIRContext *context, StringRef fileName,
+                            unsigned line, unsigned column);
+
+  StringAttr getFilename() const;
+  unsigned getLine() const;
+  unsigned getColumn() const;
+
+  /// Methods for support type inquiry through isa, cast, and dyn_cast.
+  static bool classof(Attribute attr);
 };
 
 //===----------------------------------------------------------------------===//
@@ -172,13 +208,13 @@ inline OpaqueLoc OpaqueLoc::get(T underlyingLocation, MLIRContext *context) {
 }
 
 //===----------------------------------------------------------------------===//
-// SubElementInterfaces
+// SubElements
 //===----------------------------------------------------------------------===//
 
 /// Enable locations to be introspected as sub-elements.
 template <>
 struct AttrTypeSubElementHandler<Location> {
-  static void walk(Location param, AttrTypeSubElementWalker &walker) {
+  static void walk(Location param, AttrTypeImmediateSubElementWalker &walker) {
     walker.walk(param);
   }
   static Location replace(Location param, AttrSubElementReplacements &attrRepls,

@@ -19,12 +19,14 @@
 #include "llvm/ExecutionEngine/Orc/Shared/AllocationActions.h"
 #include "llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h"
 #include "llvm/ExecutionEngine/Orc/Shared/MemoryFlags.h"
+#include "llvm/ExecutionEngine/Orc/SymbolStringPool.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MSVCErrorWorkarounds.h"
 #include "llvm/Support/Memory.h"
 #include "llvm/Support/RecyclingAllocator.h"
 
+#include <cassert>
 #include <cstdint>
 #include <future>
 #include <mutex>
@@ -291,6 +293,9 @@ private:
 /// Segment. Clients can obtain a pointer to the working memory and executor
 /// address of that block using the Segment's AllocGroup. Once memory has been
 /// populated, clients can call finalize to finalize the memory.
+///
+/// Note: Segments with MemLifetime::NoAlloc are not permitted, since they would
+/// not be useful, and their presence is likely to indicate a bug.
 class SimpleSegmentAlloc {
 public:
   /// Describes a segment to be allocated.
@@ -316,12 +321,15 @@ public:
   using OnFinalizedFunction =
       JITLinkMemoryManager::InFlightAlloc::OnFinalizedFunction;
 
-  static void Create(JITLinkMemoryManager &MemMgr, const JITLinkDylib *JD,
-                     SegmentMap Segments, OnCreatedFunction OnCreated);
+  static void Create(JITLinkMemoryManager &MemMgr,
+                     std::shared_ptr<orc::SymbolStringPool> SSP,
+                     const JITLinkDylib *JD, SegmentMap Segments,
+                     OnCreatedFunction OnCreated);
 
-  static Expected<SimpleSegmentAlloc> Create(JITLinkMemoryManager &MemMgr,
-                                             const JITLinkDylib *JD,
-                                             SegmentMap Segments);
+  static Expected<SimpleSegmentAlloc>
+  Create(JITLinkMemoryManager &MemMgr,
+         std::shared_ptr<orc::SymbolStringPool> SSP, const JITLinkDylib *JD,
+         SegmentMap Segments);
 
   SimpleSegmentAlloc(SimpleSegmentAlloc &&);
   SimpleSegmentAlloc &operator=(SimpleSegmentAlloc &&);
@@ -360,7 +368,9 @@ public:
   static Expected<std::unique_ptr<InProcessMemoryManager>> Create();
 
   /// Create an instance using the given page size.
-  InProcessMemoryManager(uint64_t PageSize) : PageSize(PageSize) {}
+  InProcessMemoryManager(uint64_t PageSize) : PageSize(PageSize) {
+    assert(isPowerOf2_64(PageSize) && "PageSize must be a power of 2");
+  }
 
   void allocate(const JITLinkDylib *JD, LinkGraph &G,
                 OnAllocatedFunction OnAllocated) override;

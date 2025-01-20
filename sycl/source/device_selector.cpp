@@ -10,13 +10,13 @@
 #include <detail/device_impl.hpp>
 #include <detail/filter_selector_impl.hpp>
 #include <detail/global_handler.hpp>
+#include <detail/program_manager/program_manager.hpp>
 #include <sycl/backend_types.hpp>
 #include <sycl/detail/device_filter.hpp>
 #include <sycl/device.hpp>
 #include <sycl/device_selector.hpp>
 #include <sycl/exception.hpp>
 #include <sycl/ext/oneapi/filter_selector.hpp>
-#include <sycl/stl.hpp>
 // 4.6.1 Device selection class
 
 #include <algorithm>
@@ -24,13 +24,13 @@
 #include <regex>
 
 namespace sycl {
-__SYCL_INLINE_VER_NAMESPACE(_V1) {
+inline namespace _V1 {
 
 namespace detail {
 
-// SYCL_DEVICE_FILTER doesn't need to be considered in the device preferences
-// as it filters the device list returned by device::get_devices itself, so
-// only matching devices will be scored.
+// ONEAPI_DEVICE_SELECTOR doesn't need to be considered in the device
+// preferences as it filters the device list returned by device::get_devices
+// itself, so only matching devices will be scored.
 static int getDevicePreference(const device &Device) {
   int Score = 0;
 
@@ -40,7 +40,7 @@ static int getDevicePreference(const device &Device) {
     Score += 1000;
 
   // Prefer level_zero backend devices.
-  if (detail::getSyclObjImpl(Device)->getPlugin().getBackend() ==
+  if (detail::getSyclObjImpl(Device)->getBackend() ==
       backend::ext_oneapi_level_zero)
     Score += 50;
 
@@ -50,10 +50,11 @@ static int getDevicePreference(const device &Device) {
 static void traceDeviceSelection(const device &Device, int Score, bool Chosen) {
   bool shouldTrace = false;
   if (Chosen) {
-    shouldTrace = detail::pi::trace(detail::pi::TraceLevel::PI_TRACE_BASIC);
+    shouldTrace = detail::ur::trace(detail::ur::TraceLevel::TRACE_BASIC);
   } else {
-    shouldTrace = detail::pi::trace(detail::pi::TraceLevel::PI_TRACE_ALL);
+    shouldTrace = detail::ur::trace(detail::ur::TraceLevel::TRACE_ALL);
   }
+
   if (shouldTrace) {
     std::string PlatformName = Device.get_info<info::device::platform>()
                                    .get_info<info::platform::name>();
@@ -61,11 +62,11 @@ static void traceDeviceSelection(const device &Device, int Score, bool Chosen) {
     auto selectionMsg = Chosen ? "Selected device: -> final score = "
                                : "Candidate device: -> score = ";
 
-    std::cout << "SYCL_PI_TRACE[all]: " << selectionMsg << Score
+    std::cout << "SYCL_UR_TRACE: " << selectionMsg << Score
               << ((Score < 0) ? " (REJECTED)" : "") << std::endl
-              << "SYCL_PI_TRACE[all]: "
+              << "SYCL_UR_TRACE: "
               << "  platform: " << PlatformName << std::endl
-              << "SYCL_PI_TRACE[all]: "
+              << "SYCL_UR_TRACE: "
               << "  device: " << DeviceName << std::endl;
   }
 }
@@ -128,7 +129,7 @@ device select_device(DSelectorInvocableType DeviceSelectorInvocable,
     Message += Acc;
   }
   Message += Suffix;
-  throw sycl::runtime_error(Message, PI_ERROR_DEVICE_NOT_FOUND);
+  throw exception(make_error_code(errc::runtime), Message);
 }
 
 // select_device(selector)
@@ -143,9 +144,16 @@ select_device(const DSelectorInvocableType &DeviceSelectorInvocable) {
 __SYCL_EXPORT device
 select_device(const DSelectorInvocableType &DeviceSelectorInvocable,
               const context &SyclContext) {
-  std::vector<device> devices = SyclContext.get_devices();
+  device SelectedDevice = select_device(DeviceSelectorInvocable);
 
-  return select_device(DeviceSelectorInvocable, devices);
+  // Throw exception if selected device is not in context.
+  std::vector<device> Devices = SyclContext.get_devices();
+  if (std::find(Devices.begin(), Devices.end(), SelectedDevice) ==
+      Devices.end())
+    throw sycl::exception(sycl::make_error_code(errc::invalid),
+                          "Selected device is not in the given context.");
+
+  return SelectedDevice;
 }
 
 } // namespace detail
@@ -160,10 +168,9 @@ select_device(const DSelectorInvocableType &DeviceSelectorInvocable,
 /// 4. Accelerator
 
 static void traceDeviceSelector(const std::string &DeviceType) {
-  bool ShouldTrace = false;
-  ShouldTrace = detail::pi::trace(detail::pi::TraceLevel::PI_TRACE_BASIC);
+  bool ShouldTrace = detail::ur::trace(detail::ur::TraceLevel::TRACE_BASIC);
   if (ShouldTrace) {
-    std::cout << "SYCL_PI_TRACE[all]: Requested device_type: " << DeviceType
+    std::cout << "SYCL_UR_TRACE: Requested device_type: " << DeviceType
               << std::endl;
   }
 }
@@ -171,13 +178,6 @@ static void traceDeviceSelector(const std::string &DeviceType) {
 __SYCL_EXPORT int default_selector_v(const device &dev) {
   // The default selector doesn't reject any devices.
   int Score = 0;
-
-  // we give the esimd_emulator device a score of zero to prevent it from being
-  // chosen among other devices. The same thing is done for gpu_selector_v
-  // below.
-  if (dev.get_backend() == backend::ext_intel_esimd_emulator) {
-    return 0;
-  }
 
   traceDeviceSelector("info::device_type::automatic");
 
@@ -201,10 +201,6 @@ __SYCL_EXPORT int default_selector_v(const device &dev) {
 
 __SYCL_EXPORT int gpu_selector_v(const device &dev) {
   int Score = detail::REJECT_DEVICE_SCORE;
-
-  if (dev.get_backend() == backend::ext_intel_esimd_emulator) {
-    return 0;
-  }
 
   traceDeviceSelector("info::device_type::gpu");
   if (dev.is_gpu()) {
@@ -234,14 +230,6 @@ __SYCL_EXPORT int accelerator_selector_v(const device &dev) {
     Score += detail::getDevicePreference(dev);
   }
   return Score;
-}
-
-int host_selector::operator()(const device &dev) const {
-  // Host device has been removed and host_selector has been deprecated, so this
-  // should never be able to select a device.
-  std::ignore = dev;
-  traceDeviceSelector("info::device_type::host");
-  return detail::REJECT_DEVICE_SCORE;
 }
 
 __SYCL_EXPORT detail::DSelectorInvocableType
@@ -295,8 +283,8 @@ int accelerator_selector::operator()(const device &dev) const {
 
 namespace ext::oneapi {
 
-filter_selector::filter_selector(const std::string &Input)
-    : impl(std::make_shared<detail::filter_selector_impl>(Input)) {}
+filter_selector::filter_selector(sycl::detail::string_view Input)
+    : impl(std::make_shared<detail::filter_selector_impl>(Input.data())) {}
 
 int filter_selector::operator()(const device &Dev) const {
   return impl->operator()(Dev);
@@ -328,7 +316,7 @@ device filter_selector::select_device() const {
 
 namespace __SYCL2020_DEPRECATED("use 'ext::oneapi' instead") ONEAPI {
 using namespace ext::oneapi;
-filter_selector::filter_selector(const std::string &Input)
+filter_selector::filter_selector(sycl::detail::string_view Input)
     : ext::oneapi::filter_selector(Input) {}
 
 int filter_selector::operator()(const device &Dev) const {
@@ -341,5 +329,5 @@ device filter_selector::select_device() const {
   return ext::oneapi::filter_selector::select_device();
 }
 } // namespace __SYCL2020_DEPRECATED("use 'ext::oneapi' instead")ONEAPI
-} // __SYCL_INLINE_VER_NAMESPACE(_V1)
+} // namespace _V1
 } // namespace sycl

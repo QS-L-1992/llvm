@@ -8,6 +8,7 @@
 
 #include "MachOObject.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/Support/SystemZ/zOSSupport.h"
 #include <unordered_set>
 
 using namespace llvm;
@@ -30,6 +31,19 @@ const SymbolEntry *SymbolTable::getSymbolByIndex(uint32_t Index) const {
 SymbolEntry *SymbolTable::getSymbolByIndex(uint32_t Index) {
   return const_cast<SymbolEntry *>(
       static_cast<const SymbolTable *>(this)->getSymbolByIndex(Index));
+}
+
+void SymbolTable::updateSymbols(function_ref<void(SymbolEntry &)> Callable) {
+  for (auto &Sym : Symbols)
+    Callable(*Sym);
+
+  // Partition symbols: local < defined external < undefined external.
+  auto ExternalBegin = std::stable_partition(
+      std::begin(Symbols), std::end(Symbols),
+      [](const auto &Sym) { return Sym->isLocalSymbol(); });
+  std::stable_partition(ExternalBegin, std::end(Symbols), [](const auto &Sym) {
+    return !Sym->isUndefinedSymbol();
+  });
 }
 
 void SymbolTable::removeSymbols(
@@ -115,7 +129,7 @@ Error Object::removeSections(
   }
 
   auto IsDead = [&](const std::unique_ptr<SymbolEntry> &S) -> bool {
-    Optional<uint32_t> Section = S->section();
+    std::optional<uint32_t> Section = S->section();
     return (Section && !OldIndexToSection.count(*Section));
   };
 
@@ -201,7 +215,7 @@ static StringRef extractSegmentName(const char *SegName) {
                    strnlen(SegName, sizeof(MachO::segment_command::segname)));
 }
 
-Optional<StringRef> LoadCommand::getSegmentName() const {
+std::optional<StringRef> LoadCommand::getSegmentName() const {
   const MachO::macho_load_command &MLC = MachOLoadCommand;
   switch (MLC.load_command_data.cmd) {
   case MachO::LC_SEGMENT:
@@ -213,7 +227,7 @@ Optional<StringRef> LoadCommand::getSegmentName() const {
   }
 }
 
-Optional<uint64_t> LoadCommand::getSegmentVMAddr() const {
+std::optional<uint64_t> LoadCommand::getSegmentVMAddr() const {
   const MachO::macho_load_command &MLC = MachOLoadCommand;
   switch (MLC.load_command_data.cmd) {
   case MachO::LC_SEGMENT:

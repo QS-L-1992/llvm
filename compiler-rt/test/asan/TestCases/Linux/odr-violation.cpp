@@ -1,7 +1,7 @@
 // FIXME: https://code.google.com/p/address-sanitizer/issues/detail?id=316
 // XFAIL: android
 // Fails with debug checks: https://bugs.llvm.org/show_bug.cgi?id=46862
-// XFAIL: !compiler-rt-optimized && !riscv64
+// XFAIL: !compiler-rt-optimized && !target=riscv64{{.*}}
 //
 // We use fast_unwind_on_malloc=0 to have full unwinding even w/o frame
 // pointers. This setting is not on by default because it's too expensive.
@@ -58,7 +58,7 @@ namespace foo { char G[SZ]; }
 #include <stdio.h>
 namespace foo { char G[100]; }
 // CHECK: ERROR: AddressSanitizer: odr-violation
-// CHECK: size=100 'foo::G' {{.*}}odr-violation.cpp:[[@LINE-2]]
+// CHECK: size=100 'foo::G' {{.*}}odr-violation.cpp:[[@LINE-2]] in {{.*}}.tmp-ODR-EXE
 // CHECK: size={{4|100}} 'foo::G'
 int main(int argc, char **argv) {
   printf("PASS: %p\n", &foo::G);

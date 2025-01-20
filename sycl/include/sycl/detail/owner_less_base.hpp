@@ -8,12 +8,11 @@
 
 #pragma once
 
-#include <sycl/detail/common.hpp>
-#include <sycl/detail/defines_elementary.hpp>
-#include <sycl/ext/oneapi/weak_object_base.hpp>
+#include <sycl/detail/impl_utils.hpp>           // for getSyclObjImpl
+#include <sycl/ext/oneapi/weak_object_base.hpp> // for getSyclWeakObjImpl
 
 namespace sycl {
-__SYCL_INLINE_VER_NAMESPACE(_V1) {
+inline namespace _V1 {
 namespace detail {
 
 // Common CRTP base class supplying a common definition of owner-before ordering
@@ -42,9 +41,16 @@ public:
     return getSyclObjImpl(*static_cast<const SyclObjT *>(this))
         .owner_before(getSyclObjImpl(Other));
   }
+#else
+  // On device calls to these functions are disallowed, so declare them but
+  // don't define them to avoid compilation failures.
+  bool ext_oneapi_owner_before(
+      const ext::oneapi::detail::weak_object_base<SyclObjT> &Other)
+      const noexcept;
+  bool ext_oneapi_owner_before(const SyclObjT &Other) const noexcept;
 #endif
 };
 
 } // namespace detail
-} // __SYCL_INLINE_VER_NAMESPACE(_V1)
+} // namespace _V1
 } // namespace sycl

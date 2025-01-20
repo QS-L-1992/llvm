@@ -13,8 +13,6 @@
 ; }
 
 
-; CHECK: .loc 1 2 0{{$}}
-; CHECK-NOT: .loc{{ }}
 ; ENABLED: .loc 1 3 3 prologue_end{{$}}
 ; DISABLED: .loc 1 3 3{{$}}
 ; CHECK-NOT: .loc
@@ -31,7 +29,7 @@
 ; CHECK-NOT: .loc
 ; CHECK: .loc 1 4 15{{$}}
 ; CHECK-NOT: .loc
-; ENABLED: .loc 1 5 1 is_stmt 1{{$}}
+; ENABLED: .loc 1 5 1 {{(epilogue_begin )?is_stmt}} 1{{$}}
 ; DISABLED: .loc 1 5 1{{$}}
 
 ; Function Attrs: nounwind uwtable

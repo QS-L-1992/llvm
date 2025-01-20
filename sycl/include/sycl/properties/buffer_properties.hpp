@@ -8,17 +8,25 @@
 
 #pragma once
 
-#include <sycl/context.hpp>
-#include <sycl/detail/property_helper.hpp>
-#include <sycl/properties/property_traits.hpp>
+#include <sycl/context.hpp>                    // for context
+#include <sycl/detail/property_helper.hpp>     // for PropWithDataKind, Dat...
+#include <sycl/properties/property_traits.hpp> // for is_property_of
+
+#include <mutex>       // for mutex
+#include <stdint.h>    // for uint32_t, uint64_t
+#include <type_traits> // for true_type
+#include <utility>     // for move
 
 namespace sycl {
-__SYCL_INLINE_VER_NAMESPACE(_V1) {
+inline namespace _V1 {
+#define __SYCL_DATA_LESS_PROP(NS_QUALIFIER, PROP_NAME, ENUM_VAL)               \
+  namespace NS_QUALIFIER {                                                     \
+  class PROP_NAME                                                              \
+      : public sycl::detail::DataLessProperty<sycl::detail::ENUM_VAL> {};      \
+  }
+#include <sycl/properties/buffer_properties.def>
 
 namespace property::buffer {
-class use_host_ptr : public detail::DataLessProperty<detail::BufferUseHostPtr> {
-};
-
 class use_mutex : public detail::PropertyWithData<detail::BufferUseMutex> {
 public:
   use_mutex(std::mutex &MutexRef) : MMutex(MutexRef) {}
@@ -64,41 +72,19 @@ private:
 } // namespace detail
 } // namespace property::buffer
 
-namespace ext::oneapi::property::buffer {
-
-class use_pinned_host_memory : public sycl::detail::DataLessProperty<
-                                   sycl::detail::BufferUsePinnedHostMemory> {};
-} // namespace ext::oneapi::property::buffer
-
 // Forward declaration
 template <typename T, int Dimensions, typename AllocatorT, typename Enable>
 class buffer;
 
-// Buffer property trait specializations
-template <typename T, int Dimensions, typename AllocatorT>
-struct is_property_of<property::buffer::use_host_ptr,
-                      buffer<T, Dimensions, AllocatorT, void>>
-    : std::true_type {};
-template <typename T, int Dimensions, typename AllocatorT>
-struct is_property_of<property::buffer::use_mutex,
-                      buffer<T, Dimensions, AllocatorT, void>>
-    : std::true_type {};
-template <typename T, int Dimensions, typename AllocatorT>
-struct is_property_of<property::buffer::detail::buffer_location,
-                      buffer<T, Dimensions, AllocatorT, void>>
-    : std::true_type {};
-template <typename T, int Dimensions, typename AllocatorT>
-struct is_property_of<property::buffer::context_bound,
-                      buffer<T, Dimensions, AllocatorT, void>>
-    : std::true_type {};
-template <typename T, int Dimensions, typename AllocatorT>
-struct is_property_of<property::buffer::mem_channel,
-                      buffer<T, Dimensions, AllocatorT, void>>
-    : std::true_type {};
-template <typename T, int Dimensions, typename AllocatorT>
-struct is_property_of<ext::oneapi::property::buffer::use_pinned_host_memory,
-                      buffer<T, Dimensions, AllocatorT, void>>
-    : std::true_type {};
+#define __SYCL_MANUALLY_DEFINED_PROP(NS_QUALIFIER, PROP_NAME)                  \
+  template <typename T, int Dimensions, typename AllocatorT>                   \
+  struct is_property_of<NS_QUALIFIER::PROP_NAME,                               \
+                        buffer<T, Dimensions, AllocatorT, void>>               \
+      : std::true_type {};
+#define __SYCL_DATA_LESS_PROP(NS_QUALIFIER, PROP_NAME, ENUM_VAL)               \
+  __SYCL_MANUALLY_DEFINED_PROP(NS_QUALIFIER, PROP_NAME)
 
-} // __SYCL_INLINE_VER_NAMESPACE(_V1)
+#include <sycl/properties/buffer_properties.def>
+
+} // namespace _V1
 } // namespace sycl

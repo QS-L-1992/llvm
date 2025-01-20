@@ -1,6 +1,6 @@
-// RUN: not llvm-mc -arch=amdgcn -show-encoding %s | FileCheck --check-prefixes=GCN,SI %s
-// RUN: not llvm-mc -arch=amdgcn %s 2>&1 | FileCheck %s --check-prefix=NOSICI --implicit-check-not=error:
-// RUN: llvm-mc -arch=amdgcn -mcpu=fiji -show-encoding %s | FileCheck --check-prefixes=GCN,VI %s
+// RUN: not llvm-mc -triple=amdgcn -show-encoding %s | FileCheck --check-prefixes=GCN,SI %s
+// RUN: not llvm-mc -triple=amdgcn %s 2>&1 | FileCheck %s --check-prefix=NOSICI --implicit-check-not=error:
+// RUN: llvm-mc -triple=amdgcn -mcpu=fiji -show-encoding %s | FileCheck --check-prefixes=GCN,VI %s
 
 //===----------------------------------------------------------------------===//
 // Edge Cases
@@ -21,6 +21,12 @@ s_nop 1
 
 s_endpgm
 // GCN: s_endpgm ; encoding: [0x00,0x00,0x81,0xbf]
+
+s_endpgm 1
+// GCN: s_endpgm 1 ; encoding: [0x01,0x00,0x81,0xbf]
+
+s_endpgm 65535
+// GCN: s_endpgm 65535 ; encoding: [0xff,0xff,0x81,0xbf]
 
 s_branch 2
 // GCN: s_branch 2 ; encoding: [0x02,0x00,0x82,0xbf]

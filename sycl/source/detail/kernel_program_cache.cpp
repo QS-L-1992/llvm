@@ -6,40 +6,16 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <detail/adapter.hpp>
 #include <detail/context_impl.hpp>
 #include <detail/kernel_program_cache.hpp>
-#include <detail/plugin.hpp>
 
 namespace sycl {
-__SYCL_INLINE_VER_NAMESPACE(_V1) {
+inline namespace _V1 {
 namespace detail {
-KernelProgramCache::~KernelProgramCache() {
-  for (auto &ProgIt : MCachedPrograms) {
-    ProgramWithBuildStateT &ProgWithState = ProgIt.second;
-    PiProgramT *ToBeDeleted = ProgWithState.Ptr.load();
-
-    if (!ToBeDeleted)
-      continue;
-
-    auto KernIt = MKernelsPerProgramCache.find(ToBeDeleted);
-
-    if (KernIt != MKernelsPerProgramCache.end()) {
-      for (auto &p : KernIt->second) {
-        KernelWithBuildStateT &KernelWithState = p.second;
-        PiKernelT *Kern = KernelWithState.Ptr.load();
-
-        if (Kern) {
-          const detail::plugin &Plugin = MParentContext->getPlugin();
-          Plugin.call<PiApiKind::piKernelRelease>(Kern);
-        }
-      }
-      MKernelsPerProgramCache.erase(KernIt);
-    }
-
-    const detail::plugin &Plugin = MParentContext->getPlugin();
-    Plugin.call<PiApiKind::piProgramRelease>(ToBeDeleted);
-  }
+const AdapterPtr &KernelProgramCache::getAdapter() {
+  return MParentContext->getAdapter();
 }
 } // namespace detail
-} // __SYCL_INLINE_VER_NAMESPACE(_V1)
+} // namespace _V1
 } // namespace sycl

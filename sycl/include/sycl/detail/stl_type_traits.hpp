@@ -8,13 +8,12 @@
 
 #pragma once
 
-#include <iterator>
-#include <memory>
-#include <sycl/detail/defines.hpp>
-#include <type_traits>
+#include <iterator>    // for iterator_traits
+#include <type_traits> // for is_const, remove_pointer_t, void_t
+#include <utility>     // for declval
 
 namespace sycl {
-__SYCL_INLINE_VER_NAMESPACE(_V1) {
+inline namespace _V1 {
 namespace detail {
 
 // Custom type traits.
@@ -31,7 +30,7 @@ using iterator_pointer_t = typename std::iterator_traits<T>::pointer;
 
 template <typename T>
 using iterator_to_const_type_t =
-    std::is_const<typename std::remove_pointer<iterator_pointer_t<T>>::type>;
+    std::is_const<std::remove_pointer_t<iterator_pointer_t<T>>>;
 
 // TODO Align with C++ named requirements: LegacyOutputIterator
 // https://en.cppreference.com/w/cpp/named_req/OutputIterator
@@ -51,5 +50,5 @@ struct is_output_iterator<T, output_iterator_requirements<T>> {
 };
 
 } // namespace detail
-} // __SYCL_INLINE_VER_NAMESPACE(_V1)
+} // namespace _V1
 } // namespace sycl

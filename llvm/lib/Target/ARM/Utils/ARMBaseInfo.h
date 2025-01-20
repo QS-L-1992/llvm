@@ -18,7 +18,7 @@
 
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/MC/SubtargetFeature.h"
+#include "llvm/TargetParser/SubtargetFeature.h"
 #include "MCTargetDesc/ARMMCTargetDesc.h"
 
 namespace llvm {
@@ -189,7 +189,7 @@ inline static unsigned ARMCondCodeFromString(StringRef CC) {
 // System Registers
 namespace ARMSysReg {
   struct MClassSysReg {
-    const char *Name;
+    const char Name[32];
     uint16_t M1Encoding12;
     uint16_t M2M3Encoding8;
     uint16_t Encoding;

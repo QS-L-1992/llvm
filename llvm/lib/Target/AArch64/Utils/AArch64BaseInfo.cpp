@@ -10,7 +10,6 @@
 //
 //===----------------------------------------------------------------------===//
 #include "AArch64BaseInfo.h"
-#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Regex.h"
@@ -68,13 +67,6 @@ namespace llvm {
 }
 
 namespace llvm {
-  namespace AArch64PRCTX {
-#define GET_PRCTX_IMPL
-#include "AArch64GenSystemOperands.inc"
-  }
-}
-
-namespace llvm {
   namespace AArch64PRFM {
 #define GET_PRFM_IMPL
 #include "AArch64GenSystemOperands.inc"
@@ -118,7 +110,9 @@ namespace llvm {
 
 namespace llvm {
   namespace AArch64PState {
-#define GET_PSTATE_IMPL
+#define GET_PSTATEIMM0_15_IMPL
+#include "AArch64GenSystemOperands.inc"
+#define GET_PSTATEIMM0_1_IMPL
 #include "AArch64GenSystemOperands.inc"
   }
 }
@@ -129,6 +123,13 @@ namespace llvm {
 #include "AArch64GenSystemOperands.inc"
   }
 }
+
+namespace llvm {
+namespace AArch64PHint {
+#define GET_PHINT_IMPL
+#include "AArch64GenSystemOperands.inc"
+} // namespace AArch64PHint
+} // namespace llvm
 
 namespace llvm {
   namespace AArch64BTIHint {

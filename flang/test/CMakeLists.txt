@@ -3,13 +3,23 @@
 add_subdirectory(lib)
 
 llvm_canonicalize_cmake_booleans(
-  FLANG_BUILD_EXAMPLES
   FLANG_STANDALONE_BUILD
+  LLVM_BUILD_EXAMPLES
   LLVM_BYE_LINK_INTO_TOOLS
   LLVM_ENABLE_PLUGINS
 )
 
 set(FLANG_TOOLS_DIR ${FLANG_BINARY_DIR}/bin)
+
+# Check if 128-bit float computations can be done via long double
+check_cxx_source_compiles(
+  "#include <cfloat>
+   #if LDBL_MANT_DIG != 113
+   #error LDBL_MANT_DIG != 113
+   #endif
+   int main() { return 0; }
+  "
+  HAVE_LDBL_MANT_DIG_113)
 
 # FIXME In out-of-tree builds, "SHLIBDIR" is undefined and passing it to
 # `configure_lit_site_cfg` leads to a configuration error. This is currently
@@ -48,7 +58,7 @@ set(FLANG_TEST_PARAMS
   flang_site_config=${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py)
 
 set(FLANG_TEST_DEPENDS
-  flang-new
+  flang
   llvm-config
   FileCheck
   count
@@ -59,9 +69,9 @@ set(FLANG_TEST_DEPENDS
   bbc
   llvm-dis
   llvm-objdump
+  llvm-readobj
   split-file
   FortranRuntime
-  Fortran_main
   FortranDecimal
 )
 if (LLVM_ENABLE_PLUGINS AND NOT WIN32)
@@ -74,21 +84,23 @@ if (FLANG_INCLUDE_TESTS)
   endif()
 endif()
 
-if (FLANG_BUILD_EXAMPLES)
+if (LLVM_BUILD_EXAMPLES)
   list(APPEND FLANG_TEST_DEPENDS
     flangPrintFunctionNames
     flangOmpReport
+    flangFeatureList
     )
 endif ()
 
 add_custom_target(flang-test-depends DEPENDS ${FLANG_TEST_DEPENDS})
+set_target_properties(flang-test-depends PROPERTIES FOLDER "Flang/Meta")
 
 add_lit_testsuite(check-flang "Running the Flang regression tests"
   ${CMAKE_CURRENT_BINARY_DIR}
   PARAMS ${FLANG_TEST_PARAMS}
   DEPENDS ${FLANG_TEST_DEPENDS}
 )
-set_target_properties(check-flang PROPERTIES FOLDER "Tests")
+set_target_properties(check-flang PROPERTIES FOLDER "Flang/Meta")
 
 # In case of standalone builds.
 if (FLANG_STANDALONE_BUILD)

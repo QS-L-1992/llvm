@@ -14,6 +14,8 @@
 #define MLIR_TABLEGEN_DIALECT_H_
 
 #include "mlir/Support/LLVM.h"
+#include "llvm/TableGen/Record.h"
+
 #include <string>
 #include <vector>
 
@@ -50,7 +52,7 @@ public:
   ArrayRef<StringRef> getDependentDialects() const;
 
   // Returns the dialects extra class declaration code.
-  llvm::Optional<StringRef> getExtraClassDeclaration() const;
+  std::optional<StringRef> getExtraClassDeclaration() const;
 
   /// Returns true if this dialect has a canonicalizer.
   bool hasCanonicalizer() const;
@@ -85,6 +87,14 @@ public:
   /// Returns true if this dialect can be extended at runtime with new
   /// operations or types.
   bool isExtensible() const;
+
+  /// Default to use properties for storing Attributes for operations in this
+  /// dialect.
+  bool usePropertiesForAttributes() const;
+
+  const llvm::DagInit *getDiscardableAttributes() const;
+
+  const llvm::Record *getDef() const { return def; }
 
   // Returns whether two dialects are equal by checking the equality of the
   // underlying record.

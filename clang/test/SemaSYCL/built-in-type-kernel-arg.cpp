@@ -103,9 +103,9 @@ int main() {
 // Check that lambda field of struct type is initialized
 // CHECK: VarDecl {{.*}}'(lambda at {{.*}}built-in-type-kernel-arg.cpp{{.*}})'
 // CHECK-NEXT: InitListExpr {{.*}}'(lambda at {{.*}}built-in-type-kernel-arg.cpp{{.*}})'
-// CHECK-NEXT: CXXConstructExpr {{.*}} 'test_struct':'test_struct' 'void (const test_struct &) noexcept'
+// CHECK-NEXT: CXXConstructExpr {{.*}} 'test_struct' 'void (const test_struct &) noexcept'
 // CHECK-NEXT: ImplicitCastExpr {{.*}} 'const test_struct' lvalue <NoOp>
-// CHECK-NEXT: UnaryOperator {{.*}} 'test_struct':'test_struct' lvalue prefix '*' cannot overflow
+// CHECK-NEXT: UnaryOperator {{.*}} 'test_struct' lvalue prefix '*' cannot overflow
 // CHECK-NEXT: CXXReinterpretCastExpr {{.*}} 'test_struct *' reinterpret_cast<test_struct *> <BitCast>
 // CHECK-NEXT: UnaryOperator {{.*}} '__generated_test_struct *' prefix '&' cannot overflow
 // CHECK-NEXT: DeclRefExpr {{.*}} '__generated_test_struct' lvalue ParmVar {{.*}} '_arg_s'

@@ -2,7 +2,8 @@ set(LLVM_LINK_COMPONENTS
   ${LLVM_TARGETS_TO_BUILD}
   BinaryFormat
   Object
-  Support)
+  Support
+  TargetParser)
 
 add_clang_tool(clang-offload-packager
   ClangOffloadPackager.cpp
@@ -11,7 +12,8 @@ add_clang_tool(clang-offload-packager
   ${tablegen_deps}
   )
 
-add_dependencies(clang clang-offload-packager)
+setup_host_tool(clang-offload-packager CLANG_OFFLOAD_PACKAGER_EXE
+  clang-offload-packager_exe clang-offload-packager_target)
 
 clang_target_link_libraries(clang-offload-packager
   PRIVATE

@@ -1,7 +1,7 @@
-add_libc_testsuite(libc_time_unittests)
+add_custom_target(libc_time_unittests)
 
 add_libc_unittest(
-  asctime
+  asctime_test
   SUITE
     libc_time_unittests
   SRCS
@@ -16,7 +16,7 @@ add_libc_unittest(
 )
 
 add_libc_unittest(
-  asctime_r
+  asctime_r_test
   SUITE
     libc_time_unittests
   SRCS
@@ -31,17 +31,63 @@ add_libc_unittest(
 )
 
 add_libc_unittest(
-  clock_gettime
+  ctime_test
   SUITE
     libc_time_unittests
   SRCS
-  clock_gettime_test.cpp
+    ctime_test.cpp
+  HDRS
+    TmHelper.h
+    TmMatcher.h
+  CXX_STANDARD
+    20
+  DEPENDS
+    libc.include.time
+    libc.hdr.types.time_t
+    libc.src.time.ctime
+    libc.src.time.time_utils
+)
+
+add_libc_unittest(
+  ctime_r_test
+  SUITE
+    libc_time_unittests
+  SRCS
+    ctime_r_test.cpp
+  HDRS
+    TmHelper.h
+    TmMatcher.h
+  CXX_STANDARD
+    20
+  DEPENDS
+    libc.include.time
+    libc.hdr.types.time_t
+    libc.src.time.ctime_r
+    libc.src.time.time_utils
+)
+
+add_libc_test(
+  clock_gettime_test
+  SUITE
+    libc_time_unittests
+  SRCS
+    clock_gettime_test.cpp
   DEPENDS
     libc.src.time.clock_gettime
 )
 
+add_libc_test(
+  clock_getres_test
+  SUITE
+    libc_time_unittests
+  SRCS
+    clock_getres_test.cpp
+  DEPENDS
+    libc.src.time.clock_getres
+)
+
 add_libc_unittest(
-  difftime
+  difftime_test
   SUITE
     libc_time_unittests
   SRCS
@@ -51,25 +97,18 @@ add_libc_unittest(
 )
 
 add_libc_unittest(
-  gettimeofday
+  gettimeofday_test
   SUITE
     libc_time_unittests
   SRCS
     gettimeofday_test.cpp
-  HDRS
-    TmHelper.h
-    TmMatcher.h
-  CXX_STANDARD
-    20
   DEPENDS
-    libc.include.errno
     libc.include.time
     libc.src.time.gettimeofday
-    libc.src.time.nanosleep
 )
 
 add_libc_unittest(
-  gmtime
+  gmtime_test
   SUITE
     libc_time_unittests
   SRCS
@@ -78,10 +117,11 @@ add_libc_unittest(
     TmMatcher.h
   DEPENDS
     libc.src.time.gmtime
+    libc.src.__support.CPP.limits
 )
 
 add_libc_unittest(
-  gmtime_r
+  gmtime_r_test
   SUITE
     libc_time_unittests
   SRCS
@@ -93,7 +133,7 @@ add_libc_unittest(
 )
 
 add_libc_unittest(
-  mktime
+  mktime_test
   SUITE
     libc_time_unittests
   SRCS
@@ -105,23 +145,19 @@ add_libc_unittest(
     20
   DEPENDS
     libc.src.time.mktime
+    libc.src.__support.CPP.limits
 )
 
-add_libc_unittest(
-  nanosleep
+add_libc_test(
+  nanosleep_test
   SUITE
     libc_time_unittests
   SRCS
     nanosleep_test.cpp
-  HDRS
-    TmHelper.h
-    TmMatcher.h
-  CXX_STANDARD
-    20
   DEPENDS
-    libc.include.errno
     libc.include.time
     libc.src.time.nanosleep
+    libc.src.errno.errno
 )
 
 add_libc_unittest(
@@ -131,19 +167,29 @@ add_libc_unittest(
   SRCS
     time_test.cpp
   DEPENDS
-    libc.include.errno
-    libc.include.time
     libc.src.time.time
+    libc.src.__support.time.clock_gettime
+    libc.src.errno.errno
 )
 
-add_libc_unittest(
+add_libc_test(
+  timespec_get_test
+  SUITE
+    libc_time_unittests
+  SRCS
+    timespec_get_test.cpp
+  DEPENDS
+    libc.src.time.timespec_get
+)
+
+add_libc_test(
   clock_test
   SUITE
     libc_time_unittests
   SRCS
     clock_test.cpp
   DEPENDS
-    libc.include.errno
     libc.include.time
     libc.src.time.clock
+    libc.src.errno.errno
 )

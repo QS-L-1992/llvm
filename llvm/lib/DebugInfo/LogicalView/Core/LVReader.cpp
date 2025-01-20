@@ -11,7 +11,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/DebugInfo/LogicalView/Core/LVReader.h"
-#include "llvm/DebugInfo/LogicalView/Core/LVLine.h"
 #include "llvm/DebugInfo/LogicalView/Core/LVScope.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatAdapters.h"
@@ -182,6 +181,9 @@ Error LVReader::createSplitFolder() {
 
 // Get the filename for given object.
 StringRef LVReader::getFilename(LVObject *Object, size_t Index) const {
+  // TODO: The current CodeView Reader implementation does not have support
+  // for multiple compile units. Until we have a proper offset calculation,
+  // check only in the current compile unit.
   if (CompileUnits.size()) {
     // Get Compile Unit for the given object.
     LVCompileUnits::const_iterator Iter =

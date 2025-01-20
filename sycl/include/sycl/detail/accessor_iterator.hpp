@@ -8,12 +8,13 @@
 
 #pragma once
 
-#include <sycl/id.hpp>
+#include <sycl/access/access.hpp> // for mode, placeholder, target
+#include <sycl/buffer.hpp>        // for range
+#include <sycl/id.hpp>            // for id
 
-#include <cstddef>
-#include <iterator>
-#include <ostream>
-#include <type_traits>
+#include <cstddef>  // for size_t
+#include <iterator> // for random_access_iterator_tag
+#include <ostream>  // for operator<<, ostream, ptrdiff_t
 
 /// \file accessor_iterator.hpp
 /// The file contains implementation of accessor iterator class.
@@ -35,7 +36,7 @@
 /// > over the elements that are within the sub-range.
 
 namespace sycl {
-__SYCL_INLINE_VER_NAMESPACE(_V1) {
+inline namespace _V1 {
 
 template <typename AccessorDataT, int AccessorDimensions,
           access::mode AccessMode, access::target AccessTarget,
@@ -55,7 +56,9 @@ public:
 
   accessor_iterator() = default;
 
-  reference operator*() { return *(MDataPtr + getAbsoluteOffsetToBuffer()); }
+  reference operator*() const {
+    return *(MDataPtr + getAbsoluteOffsetToBuffer());
+  }
 
   accessor_iterator &operator++() {
     ++MLinearId;
@@ -85,9 +88,8 @@ public:
     return *this;
   }
 
-  friend accessor_iterator operator+(const accessor_iterator &Lhs,
-                                     difference_type N) {
-    auto Ret = Lhs;
+  accessor_iterator operator+(difference_type N) const {
+    auto Ret = *this;
     Ret += N;
     return Ret;
   }
@@ -105,13 +107,12 @@ public:
     return *this;
   }
 
-  friend accessor_iterator operator-(accessor_iterator &Lhs,
-                                     difference_type N) {
-    Lhs -= N;
-    return Lhs;
+  accessor_iterator operator-(difference_type N) const {
+    auto Temp = *this;
+    return Temp -= N;
   }
 
-  reference &operator[](difference_type N) {
+  reference &operator[](difference_type N) const {
     auto Copy = *this;
     Copy += N;
     return *Copy;
@@ -139,7 +140,7 @@ public:
     return !(*this == Other);
   }
 
-  difference_type operator-(const accessor_iterator &Rhs) {
+  difference_type operator-(const accessor_iterator &Rhs) const {
     return MLinearId - Rhs.MLinearId;
   }
 
@@ -232,7 +233,7 @@ private:
   //
   // This function performs necessary calculations to make sure that all
   // access ranges and offsets are taken into account.
-  size_t getAbsoluteOffsetToBuffer() {
+  size_t getAbsoluteOffsetToBuffer() const {
     // For 1D case, any possible offsets are already incorporated into
     // MLinearId, so 1D is always treated as a non-ranged accessor
     if (!MAccessorIsRanged || Dimensions == 1)
@@ -347,5 +348,5 @@ public:
 #endif // NDEBUG
 };
 } // namespace detail
-} // __SYCL_INLINE_VER_NAMESPACE(_V1)
+} // namespace _V1
 } // namespace sycl

@@ -15,6 +15,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/ADT/iterator_range.h"
+#include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DebugInfoMetadata.h"
@@ -47,6 +48,20 @@ int llvm::getNextAvailablePluginDiagnosticKind() {
 
 const char *OptimizationRemarkAnalysis::AlwaysPrint = "";
 
+void DiagnosticInfoGeneric::print(DiagnosticPrinter &DP) const {
+  DP << getMsgStr();
+}
+
+void DiagnosticInfoGenericWithLoc::print(DiagnosticPrinter &DP) const {
+  DP << getLocationStr() << ": " << getMsgStr();
+}
+
+DiagnosticInfoInlineAsm::DiagnosticInfoInlineAsm(uint64_t LocCookie,
+                                                 const Twine &MsgStr,
+                                                 DiagnosticSeverity Severity)
+    : DiagnosticInfo(DK_InlineAsm, Severity), LocCookie(LocCookie),
+      MsgStr(MsgStr) {}
+
 DiagnosticInfoInlineAsm::DiagnosticInfoInlineAsm(const Instruction &I,
                                                  const Twine &MsgStr,
                                                  DiagnosticSeverity Severity)
@@ -63,6 +78,24 @@ void DiagnosticInfoInlineAsm::print(DiagnosticPrinter &DP) const {
   DP << getMsgStr();
   if (getLocCookie())
     DP << " at line " << getLocCookie();
+}
+
+DiagnosticInfoRegAllocFailure::DiagnosticInfoRegAllocFailure(
+    const Twine &MsgStr, const Function &Fn, const DiagnosticLocation &DL,
+    DiagnosticSeverity Severity)
+    : DiagnosticInfoWithLocationBase(DK_RegAllocFailure, Severity, Fn,
+                                     DL.isValid() ? DL : Fn.getSubprogram()),
+      MsgStr(MsgStr) {}
+
+DiagnosticInfoRegAllocFailure::DiagnosticInfoRegAllocFailure(
+    const Twine &MsgStr, const Function &Fn, DiagnosticSeverity Severity)
+    : DiagnosticInfoWithLocationBase(DK_RegAllocFailure, Severity, Fn,
+                                     Fn.getSubprogram()),
+      MsgStr(MsgStr) {}
+
+void DiagnosticInfoRegAllocFailure::print(DiagnosticPrinter &DP) const {
+  DP << getLocationStr() << ": " << MsgStr << " in function '" << getFunction()
+     << '\'';
 }
 
 DiagnosticInfoResourceLimit::DiagnosticInfoResourceLimit(
@@ -178,8 +211,12 @@ DiagnosticInfoOptimizationBase::Argument::Argument(StringRef Key,
   else if (isa<Constant>(V)) {
     raw_string_ostream OS(Val);
     V->printAsOperand(OS, /*PrintType=*/false);
-  } else if (auto *I = dyn_cast<Instruction>(V))
+  } else if (auto *I = dyn_cast<Instruction>(V)) {
     Val = I->getOpcodeName();
+  } else if (auto *MD = dyn_cast<MetadataAsValue>(V)) {
+    if (auto *S = dyn_cast<MDString>(MD->getMetadata()))
+      Val = S->getString();
+  }
 }
 
 DiagnosticInfoOptimizationBase::Argument::Argument(StringRef Key, const Type *T)
@@ -370,6 +407,10 @@ void DiagnosticInfoUnsupported::print(DiagnosticPrinter &DP) const {
   DP << Str;
 }
 
+void DiagnosticInfoInstrumentation::print(DiagnosticPrinter &DP) const {
+  DP << Msg;
+}
+
 void DiagnosticInfoISelFallback::print(DiagnosticPrinter &DP) const {
   DP << "Instruction selection used fallback path for " << getFunction();
 }
@@ -398,7 +439,7 @@ std::string DiagnosticInfoOptimizationBase::getMsg() const {
                                     ? Args.end()
                                     : Args.begin() + FirstExtraArgIndex))
     OS << Arg.Val;
-  return OS.str();
+  return Str;
 }
 
 DiagnosticInfoMisExpect::DiagnosticInfoMisExpect(const Instruction *Inst,
@@ -416,7 +457,9 @@ void OptimizationRemarkAnalysisFPCommute::anchor() {}
 void OptimizationRemarkAnalysisAliasing::anchor() {}
 
 void llvm::diagnoseDontCall(const CallInst &CI) {
-  auto *F = CI.getCalledFunction();
+  const auto *F =
+      dyn_cast<Function>(CI.getCalledOperand()->stripPointerCasts());
+
   if (!F)
     return;
 
@@ -425,7 +468,7 @@ void llvm::diagnoseDontCall(const CallInst &CI) {
     auto Sev = i == 0 ? DS_Error : DS_Warning;
 
     if (F->hasFnAttribute(AttrName)) {
-      unsigned LocCookie = 0;
+      uint64_t LocCookie = 0;
       auto A = F->getFnAttribute(AttrName);
       if (MDNode *MD = CI.getMetadata("srcloc"))
         LocCookie =
@@ -438,7 +481,7 @@ void llvm::diagnoseDontCall(const CallInst &CI) {
 }
 
 void DiagnosticInfoDontCall::print(DiagnosticPrinter &DP) const {
-  DP << "call to " << getFunctionName() << " marked \"dontcall-";
+  DP << "call to " << demangle(getFunctionName()) << " marked \"dontcall-";
   if (getSeverity() == DiagnosticSeverity::DS_Error)
     DP << "error\"";
   else
@@ -475,4 +518,26 @@ void DiagnosticInfoAspectsMismatch::print(DiagnosticPrinter &DP) const {
   DP << getFunctionName() << " uses aspect \"" << getAspect()
      << "\" but does not specify that aspect as available in its "
         "\"sycl::device_has\" attribute";
+}
+
+void llvm::diagnoseSYCLIllegalVirtualFunctionCall(
+    const SmallVector<const Function *> &CallChain) {
+  llvm::SmallVector<std::pair<StringRef, unsigned>, 8> LoweredCallChain;
+  for (const Function *Callee : CallChain) {
+    unsigned CalleeLocCookie = 0;
+    if (MDNode *MD = Callee->getMetadata("srcloc"))
+      CalleeLocCookie =
+          mdconst::extract<ConstantInt>(MD->getOperand(0))->getZExtValue();
+    LoweredCallChain.push_back(
+        std::make_pair(Callee->getName(), CalleeLocCookie));
+  }
+
+  DiagnosticInfoIllegalVirtualCall D(LoweredCallChain);
+  CallChain.front()->getContext().diagnose(D);
+}
+
+void DiagnosticInfoIllegalVirtualCall::print(DiagnosticPrinter &DP) const {
+  DP << CallChain.front().first
+     << " performs virtual function call, but a kernel that is called from is "
+        "not submitted with \"calls_indirectly\" property";
 }

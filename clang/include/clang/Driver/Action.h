@@ -14,6 +14,7 @@
 #include "clang/Driver/Util.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/iterator_range.h"
@@ -78,7 +79,6 @@ public:
     OffloadPackagerJobClass,
     OffloadDepsJobClass,
     SPIRVTranslatorJobClass,
-    SPIRCheckJobClass,
     SYCLPostLinkJobClass,
     BackendCompileJobClass,
     FileTableTformJobClass,
@@ -86,9 +86,10 @@ public:
     SpirvToIrWrapperJobClass,
     LinkerWrapperJobClass,
     StaticLibJobClass,
+    BinaryAnalyzeJobClass,
 
     JobClassFirst = PreprocessJobClass,
-    JobClassLast = StaticLibJobClass
+    JobClassLast = BinaryAnalyzeJobClass
   };
 
   // The offloading kind determines if this action is binded to a particular
@@ -104,7 +105,7 @@ public:
     OFK_Cuda = 0x02,
     OFK_OpenMP = 0x04,
     OFK_HIP = 0x08,
-    OFK_SYCL = 0x10
+    OFK_SYCL = 0x10,
   };
 
   static const char *getClassName(ActionClass AC);
@@ -628,10 +629,22 @@ public:
           DependentOffloadKind(DependentOffloadKind) {}
   };
 
+  /// Allow for a complete override of the target to unbundle.
+  /// This is used for specific unbundles used for SYCL AOT when generating full
+  /// device files that are bundled with the host object.
+  void setTargetString(std::string Target) { TargetString = Target; }
+
+  std::string getTargetString() const { return TargetString; }
+
 private:
   /// Container that keeps information about each dependence of this unbundling
   /// action.
   SmallVector<DependentActionInfo, 6> DependentActionInfoArray;
+
+  /// Provides a specific type to be used that overrides the input type.
+  types::ID DependentType = types::TY_Nothing;
+
+  std::string TargetString;
 
 public:
   // Offloading unbundling doesn't change the type of output.
@@ -653,18 +666,57 @@ public:
   static bool classof(const Action *A) {
     return A->getKind() == OffloadUnbundlingJobClass;
   }
+
+  /// Set the dependent type.
+  void setDependentType(types::ID Type) { DependentType = Type; }
+
+  /// Get the dependent type.
+  types::ID getDependentType() const { return DependentType; }
 };
 
 class OffloadWrapperJobAction : public JobAction {
   void anchor() override;
 
+  bool EmbedIR;
+
 public:
   OffloadWrapperJobAction(ActionList &Inputs, types::ID Type);
-  OffloadWrapperJobAction(Action *Input, types::ID OutputType);
+  OffloadWrapperJobAction(Action *Input, types::ID OutputType,
+                          bool EmbedIR = false);
+
+  bool isEmbeddedIR() const { return EmbedIR; }
 
   static bool classof(const Action *A) {
     return A->getKind() == OffloadWrapperJobClass;
   }
+
+  // Set the compilation step setting.  This is used to tell the wrapper job
+  // action that the compilation step to create the object should be performed
+  // after the wrapping step is complete.
+  void setCompileStep(bool SetValue) { CompileStep = SetValue; }
+
+  // Get the compilation step setting.
+  bool getCompileStep() const { return CompileStep; }
+
+  // Set the individual wrapping setting.  This is used to tell the wrapper job
+  // action that the wrapping (and subsequent compile step) should be done
+  // with for-each instead of using -batch.
+  void setWrapIndividualFiles() { WrapIndividualFiles = true; }
+
+  // Get the individual wrapping setting.
+  bool getWrapIndividualFiles() const { return WrapIndividualFiles; }
+
+  // Set the offload kind for the current wrapping job action.  Default usage
+  // is to use the kind of the current toolchain.
+  void setOffloadKind(OffloadKind SetKind) { Kind = SetKind; }
+
+  // Get the offload kind.
+  OffloadKind getOffloadKind() const { return Kind; }
+
+private:
+  bool CompileStep = true;
+  bool WrapIndividualFiles = false;
+  OffloadKind Kind = OFK_None;
 };
 
 class OffloadPackagerJobAction : public JobAction {
@@ -743,21 +795,6 @@ public:
   }
 };
 
-// Provides a check of the given input file for the existence of SPIR kernel
-// code.  This is currently only used for FPGA specific tool chains and can
-// be expanded to perform other SPIR checks if needed.
-// TODO: No longer being used for FPGA (or elsewhere), cleanup needed.
-class SPIRCheckJobAction : public JobAction {
-  void anchor() override;
-
-public:
-  SPIRCheckJobAction(Action *Input, types::ID OutputType);
-
-  static bool classof(const Action *A) {
-    return A->getKind() == SPIRCheckJobClass;
-  }
-};
-
 class SYCLPostLinkJobAction : public JobAction {
   void anchor() override;
 
@@ -809,6 +846,7 @@ class FileTableTformJobAction : public JobAction {
 public:
   static constexpr const char *COL_CODE = "Code";
   static constexpr const char *COL_ZERO = "0";
+  static constexpr const char *COL_SYM_AND_PROPS = "SymAndProps";
 
   struct Tform {
     enum Kind {
@@ -817,12 +855,13 @@ public:
       REPLACE,
       REPLACE_CELL,
       RENAME,
-      COPY_SINGLE_FILE
+      COPY_SINGLE_FILE,
+      MERGE
     };
 
     Tform() = default;
     Tform(Kind K, std::initializer_list<StringRef> Args) : TheKind(K) {
-      for (auto A : Args)
+      for (auto &A : Args)
         TheArgs.emplace_back(A.str());
     }
 
@@ -854,6 +893,10 @@ public:
   // should copy the file at column <ColumnName> and row <Row> into the
   // output file.
   void addCopySingleFileTform(StringRef ColumnName, int Row);
+
+  // Merges all tables from filename listed at column <ColumnName> into a
+  // single output table.
+  void addMergeTform(StringRef ColumnName);
 
   static bool classof(const Action *A) {
     return A->getKind() == FileTableTformJobClass;
@@ -936,6 +979,25 @@ public:
 
   static bool classof(const Action *A) {
     return A->getKind() == ForEachWrappingClass;
+  }
+
+  void addSerialAction(const Action *A) { SerialActions.insert(A); }
+  const llvm::SmallSetVector<const Action *, 2> &getSerialActions() const {
+    return SerialActions;
+  }
+
+private:
+  llvm::SmallSetVector<const Action *, 2> SerialActions;
+};
+
+class BinaryAnalyzeJobAction : public JobAction {
+  void anchor() override;
+
+public:
+  BinaryAnalyzeJobAction(Action *Input, types::ID Type);
+
+  static bool classof(const Action *A) {
+    return A->getKind() == BinaryAnalyzeJobClass;
   }
 };
 

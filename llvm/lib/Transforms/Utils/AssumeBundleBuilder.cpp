@@ -19,7 +19,6 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
-#include "llvm/InitializePasses.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/DebugCounter.h"
 #include "llvm/Transforms/Utils/Local.h"
@@ -226,7 +225,8 @@ struct AssumeBuilderState {
       return nullptr;
     if (!DebugCounter::shouldExecute(BuildAssumeCounter))
       return nullptr;
-    Function *FnAssume = Intrinsic::getDeclaration(M, Intrinsic::assume);
+    Function *FnAssume =
+        Intrinsic::getOrInsertDeclaration(M, Intrinsic::assume);
     LLVMContext &C = M->getContext();
     SmallVector<OperandBundleDef, 8> OpBundle;
     for (auto &MapElem : AssumedKnowledgeMap) {
@@ -254,7 +254,7 @@ struct AssumeBuilderState {
     unsigned DerefSize = MemInst->getModule()
                              ->getDataLayout()
                              .getTypeStoreSize(AccType)
-                             .getKnownMinSize();
+                             .getKnownMinValue();
     if (DerefSize != 0) {
       addKnowledge({Attribute::Dereferenceable, DerefSize, Pointer});
       if (!NullPointerIsDefined(MemInst->getFunction(),
@@ -290,17 +290,20 @@ AssumeInst *llvm::buildAssumeFromInst(Instruction *I) {
   return Builder.build();
 }
 
-void llvm::salvageKnowledge(Instruction *I, AssumptionCache *AC,
+bool llvm::salvageKnowledge(Instruction *I, AssumptionCache *AC,
                             DominatorTree *DT) {
   if (!EnableKnowledgeRetention || I->isTerminator())
-    return;
+    return false;
+  bool Changed = false;
   AssumeBuilderState Builder(I->getModule(), I, AC, DT);
   Builder.addInstruction(I);
   if (auto *Intr = Builder.build()) {
     Intr->insertBefore(I);
+    Changed = true;
     if (AC)
       AC->registerAssumption(Intr);
   }
+  return Changed;
 }
 
 AssumeInst *
@@ -318,7 +321,7 @@ RetainedKnowledge llvm::simplifyRetainedKnowledge(AssumeInst *Assume,
                                                   AssumptionCache *AC,
                                                   DominatorTree *DT) {
   AssumeBuilderState Builder(Assume->getModule(), Assume, AC, DT);
-  RK = canonicalizedKnowledge(RK, Assume->getModule()->getDataLayout());
+  RK = canonicalizedKnowledge(RK, Assume->getDataLayout());
 
   if (!Builder.isKnowledgeWorthPreserving(RK))
     return RetainedKnowledge::none();
@@ -409,7 +412,7 @@ struct AssumeSimplify {
             CleanupToDo.insert(Assume);
             if (BOI.Begin != BOI.End) {
               Use *U = &Assume->op_begin()[BOI.Begin + ABA_WasOn];
-              U->set(UndefValue::get(U->get()->getType()));
+              U->set(PoisonValue::get(U->get()->getType()));
             }
             BOI.Tag = IgnoreTag;
           };
@@ -563,89 +566,24 @@ PreservedAnalyses AssumeSimplifyPass::run(Function &F,
                                           FunctionAnalysisManager &AM) {
   if (!EnableKnowledgeRetention)
     return PreservedAnalyses::all();
-  simplifyAssumes(F, &AM.getResult<AssumptionAnalysis>(F),
-                  AM.getCachedResult<DominatorTreeAnalysis>(F));
-  return PreservedAnalyses::all();
-}
-
-namespace {
-class AssumeSimplifyPassLegacyPass : public FunctionPass {
-public:
-  static char ID;
-
-  AssumeSimplifyPassLegacyPass() : FunctionPass(ID) {
-    initializeAssumeSimplifyPassLegacyPassPass(
-        *PassRegistry::getPassRegistry());
-  }
-  bool runOnFunction(Function &F) override {
-    if (skipFunction(F) || !EnableKnowledgeRetention)
-      return false;
-    AssumptionCache &AC =
-        getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
-    DominatorTreeWrapperPass *DTWP =
-        getAnalysisIfAvailable<DominatorTreeWrapperPass>();
-    return simplifyAssumes(F, &AC, DTWP ? &DTWP->getDomTree() : nullptr);
-  }
-
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<AssumptionCacheTracker>();
-
-    AU.setPreservesAll();
-  }
-};
-} // namespace
-
-char AssumeSimplifyPassLegacyPass::ID = 0;
-
-INITIALIZE_PASS_BEGIN(AssumeSimplifyPassLegacyPass, "assume-simplify",
-                      "Assume Simplify", false, false)
-INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
-INITIALIZE_PASS_END(AssumeSimplifyPassLegacyPass, "assume-simplify",
-                    "Assume Simplify", false, false)
-
-FunctionPass *llvm::createAssumeSimplifyPass() {
-  return new AssumeSimplifyPassLegacyPass();
+  if (!simplifyAssumes(F, &AM.getResult<AssumptionAnalysis>(F),
+                       AM.getCachedResult<DominatorTreeAnalysis>(F)))
+    return PreservedAnalyses::all();
+  PreservedAnalyses PA;
+  PA.preserveSet<CFGAnalyses>();
+  return PA;
 }
 
 PreservedAnalyses AssumeBuilderPass::run(Function &F,
                                          FunctionAnalysisManager &AM) {
   AssumptionCache *AC = &AM.getResult<AssumptionAnalysis>(F);
   DominatorTree* DT = AM.getCachedResult<DominatorTreeAnalysis>(F);
+  bool Changed = false;
   for (Instruction &I : instructions(F))
-    salvageKnowledge(&I, AC, DT);
-  return PreservedAnalyses::all();
+    Changed |= salvageKnowledge(&I, AC, DT);
+  if (!Changed)
+    PreservedAnalyses::all();
+  PreservedAnalyses PA;
+  PA.preserveSet<CFGAnalyses>();
+  return PA;
 }
-
-namespace {
-class AssumeBuilderPassLegacyPass : public FunctionPass {
-public:
-  static char ID;
-
-  AssumeBuilderPassLegacyPass() : FunctionPass(ID) {
-    initializeAssumeBuilderPassLegacyPassPass(*PassRegistry::getPassRegistry());
-  }
-  bool runOnFunction(Function &F) override {
-    AssumptionCache &AC =
-        getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
-    DominatorTreeWrapperPass *DTWP =
-        getAnalysisIfAvailable<DominatorTreeWrapperPass>();
-    for (Instruction &I : instructions(F))
-      salvageKnowledge(&I, &AC, DTWP ? &DTWP->getDomTree() : nullptr);
-    return true;
-  }
-
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<AssumptionCacheTracker>();
-
-    AU.setPreservesAll();
-  }
-};
-} // namespace
-
-char AssumeBuilderPassLegacyPass::ID = 0;
-
-INITIALIZE_PASS_BEGIN(AssumeBuilderPassLegacyPass, "assume-builder",
-                      "Assume Builder", false, false)
-INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
-INITIALIZE_PASS_END(AssumeBuilderPassLegacyPass, "assume-builder",
-                    "Assume Builder", false, false)

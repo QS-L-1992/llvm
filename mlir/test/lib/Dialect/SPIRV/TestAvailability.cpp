@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SPIRV/IR/SPIRVAttributes.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVOps.h"
 #include "mlir/Dialect/SPIRV/Transforms/SPIRVConversion.h"
 #include "mlir/Pass/Pass.h"
@@ -45,7 +46,7 @@ void PrintOpAvailability::runOnOperation() {
     auto &os = llvm::outs();
 
     if (auto minVersionIfx = dyn_cast<spirv::QueryMinVersionInterface>(op)) {
-      Optional<spirv::Version> minVersion = minVersionIfx.getMinVersion();
+      std::optional<spirv::Version> minVersion = minVersionIfx.getMinVersion();
       os << opName << " min version: ";
       if (minVersion)
         os << spirv::stringifyVersion(*minVersion) << "\n";
@@ -54,7 +55,7 @@ void PrintOpAvailability::runOnOperation() {
     }
 
     if (auto maxVersionIfx = dyn_cast<spirv::QueryMaxVersionInterface>(op)) {
-      Optional<spirv::Version> maxVersion = maxVersionIfx.getMaxVersion();
+      std::optional<spirv::Version> maxVersion = maxVersionIfx.getMaxVersion();
       os << opName << " max version: ";
       if (maxVersion)
         os << spirv::stringifyVersion(*maxVersion) << "\n";
@@ -191,15 +192,27 @@ struct ConvertToSubgroupBallot : RewritePattern {
     return success();
   }
 };
+
+template <const char *TestOpName, typename SPIRVOp>
+struct ConvertToIntegerDotProd : RewritePattern {
+  ConvertToIntegerDotProd(MLIRContext *context)
+      : RewritePattern(TestOpName, 1, context, {SPIRVOp::getOperationName()}) {}
+
+  LogicalResult matchAndRewrite(Operation *op,
+                                PatternRewriter &rewriter) const override {
+    rewriter.replaceOpWithNewOp<SPIRVOp>(op, op->getResultTypes(),
+                                         op->getOperands(), op->getAttrs());
+    return success();
+  }
+};
 } // namespace
 
 void ConvertToTargetEnv::runOnOperation() {
   MLIRContext *context = &getContext();
   func::FuncOp fn = getOperation();
 
-  auto targetEnv = fn.getOperation()
-                       ->getAttr(spirv::getTargetEnvAttrName())
-                       .cast<spirv::TargetEnvAttr>();
+  auto targetEnv = dyn_cast_or_null<spirv::TargetEnvAttr>(
+      fn.getOperation()->getDiscardableAttr(spirv::getTargetEnvAttrName()));
   if (!targetEnv) {
     fn.emitError("missing 'spirv.target_env' attribute");
     return signalPassFailure();
@@ -207,10 +220,27 @@ void ConvertToTargetEnv::runOnOperation() {
 
   auto target = SPIRVConversionTarget::get(targetEnv);
 
+  static constexpr char sDotTestOpName[] = "test.convert_to_sdot_op";
+  static constexpr char suDotTestOpName[] = "test.convert_to_sudot_op";
+  static constexpr char uDotTestOpName[] = "test.convert_to_udot_op";
+  static constexpr char sDotAccSatTestOpName[] =
+      "test.convert_to_sdot_acc_sat_op";
+  static constexpr char suDotAccSatTestOpName[] =
+      "test.convert_to_sudot_acc_sat_op";
+  static constexpr char uDotAccSatTestOpName[] =
+      "test.convert_to_udot_acc_sat_op";
+
   RewritePatternSet patterns(context);
-  patterns.add<ConvertToAtomCmpExchangeWeak, ConvertToBitReverse,
-               ConvertToGroupNonUniformBallot, ConvertToModule,
-               ConvertToSubgroupBallot>(context);
+  patterns.add<
+      ConvertToAtomCmpExchangeWeak, ConvertToBitReverse,
+      ConvertToGroupNonUniformBallot, ConvertToModule, ConvertToSubgroupBallot,
+      ConvertToIntegerDotProd<sDotTestOpName, spirv::SDotOp>,
+      ConvertToIntegerDotProd<suDotTestOpName, spirv::SUDotOp>,
+      ConvertToIntegerDotProd<uDotTestOpName, spirv::UDotOp>,
+      ConvertToIntegerDotProd<sDotAccSatTestOpName, spirv::SDotAccSatOp>,
+      ConvertToIntegerDotProd<suDotAccSatTestOpName, spirv::SUDotAccSatOp>,
+      ConvertToIntegerDotProd<uDotAccSatTestOpName, spirv::UDotAccSatOp>>(
+      context);
 
   if (failed(applyPartialConversion(fn, *target, std::move(patterns))))
     return signalPassFailure();

@@ -8,36 +8,165 @@
 
 #pragma once
 
-#include "fpga_utils.hpp"
-#include <CL/__spirv/spirv_ops.hpp>
-#include <CL/__spirv/spirv_types.hpp>
-#include <sycl/ext/oneapi/properties/properties.hpp>
-#include <sycl/stl.hpp>
-#include <type_traits>
+#include <sycl/detail/export.hpp>                          // for __SYCL_EX...
+#include <sycl/device.hpp>                                 // for device
+#include <sycl/event.hpp>                                  // for event
+#include <sycl/exception.hpp>                              // for make_erro...
+#include <sycl/ext/intel/experimental/pipe_properties.hpp> // for protocol_...
+#include <sycl/ext/oneapi/properties/properties.hpp>       // for ValueOrDe...
+#include <sycl/handler.hpp>                                // for handler
+#include <sycl/info/info_desc.hpp>                         // for event_com...
+#include <sycl/memory_enums.hpp>                           // for memory_order
+#include <sycl/queue.hpp>                                  // for queue
+
+#ifdef __SYCL_DEVICE_ONLY__
+#include <sycl/ext/intel/experimental/fpga_utils.hpp>
+#include <sycl/ext/oneapi/latency_control/properties.hpp>
+#endif
+
+#ifdef XPTI_ENABLE_INSTRUMENTATION
+#include <xpti/xpti_data_types.h>
+#include <xpti/xpti_trace_framework.hpp>
+#endif
+
+#include <stdint.h> // for int32_t
+#include <string>   // for string
+#include <tuple>    // for _Swallow_...
 
 namespace sycl {
-__SYCL_INLINE_VER_NAMESPACE(_V1) {
-namespace ext::intel::experimental {
+inline namespace _V1 {
+namespace ext {
+namespace intel {
+namespace experimental {
+
+// A helper templateless base class.
+class pipe_base {
+
+protected:
+  pipe_base() = default;
+  ~pipe_base() = default;
+
+  __SYCL_EXPORT static sycl::detail::string
+  get_pipe_name_impl(const void *HostPipePtr);
+
+#ifdef __INTEL_PREVIEW_BREAKING_CHANGES
+  static std::string get_pipe_name(const void *HostPipePtr) {
+    return {get_pipe_name_impl(HostPipePtr).c_str()};
+  }
+#else
+  __SYCL_EXPORT static std::string get_pipe_name(const void *HostPipePtr);
+#endif
+
+  __SYCL_EXPORT static bool wait_non_blocking(const event &E);
+};
+
+#ifndef __INTEL_PREVIEW_BREAKING_CHANGES
+// We want all "new" uses/recompilation to use the "inline" version, yet we
+// still need to provide an exported symbol for the code that was compiled
+// before that. Make sure we use "inline" everywhere except when compiling
+// `pipes.cpp` so that we'd still provide this backward-compatibility ABI symbol
+// via `pipes.cpp` TU.
+#ifdef __SYCL_PIPES_CPP
+// Magic combination found by trial and error:
+__SYCL_EXPORT
+#if _WIN32
+inline
+#endif
+#else
+inline
+#endif
+    std::string
+    pipe_base::get_pipe_name(const void *HostPipePtr) {
+  return {get_pipe_name_impl(HostPipePtr).c_str()};
+}
+#endif
 
 template <class _name, class _dataT, int32_t _min_capacity = 0,
           class _propertiesT = decltype(oneapi::experimental::properties{}),
           class = void>
-class pipe {
-  static_assert(std::is_same_v<_propertiesT,
-                               decltype(oneapi::experimental::properties{})>,
-                "experimental pipe properties are not yet implemented");
-};
-
-template <class _name, class _dataT, int32_t _min_capacity, class _propertiesT>
-class pipe<_name, _dataT, _min_capacity, _propertiesT,
-           std::enable_if_t<std::is_same_v<
-               _propertiesT, decltype(oneapi::experimental::properties{})>>> {
+class pipe : public pipe_base {
 public:
+  struct
+#ifdef __SYCL_DEVICE_ONLY__
+      [[__sycl_detail__::add_ir_attributes_global_variable(
+          "sycl-host-pipe", "sycl-host-pipe-size", nullptr,
+          sizeof(_dataT))]] [[__sycl_detail__::sycl_type(host_pipe)]]
+#endif // __SYCL_DEVICE_ONLY___
+      ConstantPipeStorageExp
+#ifdef __SYCL_DEVICE_ONLY__
+      : ConstantPipeStorage
+#endif // __SYCL_DEVICE_ONLY___
+  {
+    int32_t _ReadyLatency;
+    int32_t _BitsPerSymbol;
+    bool _UsesValid;
+    bool _FirstSymInHighOrderBits;
+    protocol_name _Protocol;
+  };
+
   // Non-blocking pipes
+
+  // Host API
+  static _dataT read(queue &Q, bool &Success,
+                     memory_order Order = memory_order::seq_cst) {
+    // Order is currently unused.
+    std::ignore = Order;
+
+    const device Dev = Q.get_device();
+    bool IsPipeSupported =
+        Dev.has_extension("cl_intel_program_scope_host_pipe");
+    if (!IsPipeSupported) {
+      return _dataT();
+    }
+    _dataT Data;
+    void *DataPtr = &Data;
+    const void *HostPipePtr = &m_Storage;
+    const std::string PipeName = pipe_base::get_pipe_name(HostPipePtr);
+
+    event E = Q.submit([=](handler &CGH) {
+      CGH.ext_intel_read_host_pipe(PipeName, DataPtr,
+                                   sizeof(_dataT) /* non-blocking */);
+    });
+    // In OpenCL 1.0 waiting for a failed event does not return an error, so we
+    // need to check the execution status here as well.
+    Success = wait_non_blocking(E) &&
+              E.get_info<sycl::info::event::command_execution_status>() ==
+                  sycl::info::event_command_status::complete;
+    ;
+    return Success ? *(_dataT *)DataPtr : _dataT();
+  }
+
+  static void write(queue &Q, const _dataT &Data, bool &Success,
+                    memory_order Order = memory_order::seq_cst) {
+    // Order is currently unused.
+    std::ignore = Order;
+
+    const device Dev = Q.get_device();
+    bool IsPipeSupported =
+        Dev.has_extension("cl_intel_program_scope_host_pipe");
+    if (!IsPipeSupported) {
+      return;
+    }
+
+    const void *HostPipePtr = &m_Storage;
+    const std::string PipeName = pipe_base::get_pipe_name(HostPipePtr);
+    void *DataPtr = const_cast<_dataT *>(&Data);
+
+    event E = Q.submit([=](handler &CGH) {
+      CGH.ext_intel_write_host_pipe(PipeName, DataPtr,
+                                    sizeof(_dataT) /* non-blocking */);
+    });
+    // In OpenCL 1.0 waiting for a failed event does not return an error, so we
+    // need to check the execution status here as well.
+    Success = wait_non_blocking(E) &&
+              E.get_info<sycl::info::event::command_execution_status>() ==
+                  sycl::info::event_command_status::complete;
+  }
+
   // Reading from pipe is lowered to SPIR-V instruction OpReadPipe via SPIR-V
   // friendly LLVM IR.
   template <typename _functionPropertiesT>
-  static _dataT read(bool &Success, _functionPropertiesT Properties) {
+  static _dataT read(bool &Success, _functionPropertiesT) {
 #ifdef __SYCL_DEVICE_ONLY__
     // Get latency control properties
     using _latency_anchor_id_prop = typename detail::GetOrDefaultValT<
@@ -72,10 +201,10 @@ public:
     return TempData;
 #else
     (void)Success;
-    (void)Properties;
     throw sycl::exception(
         sycl::make_error_code(sycl::errc::feature_not_supported),
-        "Pipes are not supported on a host device.");
+        "Device-side API are not supported on a host device. Please use "
+        "host-side API instead.");
 #endif // __SYCL_DEVICE_ONLY__
   }
 
@@ -86,8 +215,7 @@ public:
   // Writing to pipe is lowered to SPIR-V instruction OpWritePipe via SPIR-V
   // friendly LLVM IR.
   template <typename _functionPropertiesT>
-  static void write(const _dataT &Data, bool &Success,
-                    _functionPropertiesT Properties) {
+  static void write(const _dataT &Data, bool &Success, _functionPropertiesT) {
 #ifdef __SYCL_DEVICE_ONLY__
     // Get latency control properties
     using _latency_anchor_id_prop = typename detail::GetOrDefaultValT<
@@ -121,10 +249,10 @@ public:
 #else
     (void)Success;
     (void)Data;
-    (void)Properties;
     throw sycl::exception(
         sycl::make_error_code(sycl::errc::feature_not_supported),
-        "Pipes are not supported on a host device.");
+        "Device-side API are not supported on a host device. Please use "
+        "host-side API instead.");
 #endif // __SYCL_DEVICE_ONLY__
   }
 
@@ -132,11 +260,58 @@ public:
     write(Data, Success, oneapi::experimental::properties{});
   }
 
+  static const void *get_host_ptr() { return &m_Storage; }
+
   // Blocking pipes
+
+  // Host API
+  static _dataT read(queue &Q, memory_order Order = memory_order::seq_cst) {
+    // Order is currently unused.
+    std::ignore = Order;
+
+    const device Dev = Q.get_device();
+    bool IsPipeSupported =
+        Dev.has_extension("cl_intel_program_scope_host_pipe");
+    if (!IsPipeSupported) {
+      return _dataT();
+    }
+    _dataT Data;
+    void *DataPtr = &Data;
+    const void *HostPipePtr = &m_Storage;
+    const std::string PipeName = pipe_base::get_pipe_name(HostPipePtr);
+    event E = Q.submit([=](handler &CGH) {
+      CGH.ext_intel_read_host_pipe(PipeName, DataPtr, sizeof(_dataT),
+                                   true /*blocking*/);
+    });
+    E.wait();
+    return *(_dataT *)DataPtr;
+  }
+
+  static void write(queue &Q, const _dataT &Data,
+                    memory_order Order = memory_order::seq_cst) {
+    // Order is currently unused.
+    std::ignore = Order;
+
+    const device Dev = Q.get_device();
+    bool IsPipeSupported =
+        Dev.has_extension("cl_intel_program_scope_host_pipe");
+    if (!IsPipeSupported) {
+      return;
+    }
+    const void *HostPipePtr = &m_Storage;
+    const std::string PipeName = pipe_base::get_pipe_name(HostPipePtr);
+    void *DataPtr = const_cast<_dataT *>(&Data);
+    event E = Q.submit([=](handler &CGH) {
+      CGH.ext_intel_write_host_pipe(PipeName, DataPtr, sizeof(_dataT),
+                                    true /*blocking */);
+    });
+    E.wait();
+  }
+
   // Reading from pipe is lowered to SPIR-V instruction OpReadPipe via SPIR-V
   // friendly LLVM IR.
   template <typename _functionPropertiesT>
-  static _dataT read(_functionPropertiesT Properties) {
+  static _dataT read(_functionPropertiesT) {
 #ifdef __SYCL_DEVICE_ONLY__
     // Get latency control properties
     using _latency_anchor_id_prop = typename detail::GetOrDefaultValT<
@@ -170,10 +345,10 @@ public:
                                       _relative_cycle);
     return TempData;
 #else
-    (void)Properties;
     throw sycl::exception(
         sycl::make_error_code(sycl::errc::feature_not_supported),
-        "Pipes are not supported on a host device.");
+        "Device-side API are not supported on a host device. Please use "
+        "host-side API instead.");
 #endif // __SYCL_DEVICE_ONLY__
   }
 
@@ -182,7 +357,7 @@ public:
   // Writing to pipe is lowered to SPIR-V instruction OpWritePipe via SPIR-V
   // friendly LLVM IR.
   template <typename _functionPropertiesT>
-  static void write(const _dataT &Data, _functionPropertiesT Properties) {
+  static void write(const _dataT &Data, _functionPropertiesT) {
 #ifdef __SYCL_DEVICE_ONLY__
     // Get latency control properties
     using _latency_anchor_id_prop = typename detail::GetOrDefaultValT<
@@ -215,10 +390,10 @@ public:
                                        _relative_cycle);
 #else
     (void)Data;
-    (void)Properties;
     throw sycl::exception(
         sycl::make_error_code(sycl::errc::feature_not_supported),
-        "Pipes are not supported on a host device.");
+        "Device-side API are not supported on a host device. Please use "
+        "host-side API instead.");
 #endif // __SYCL_DEVICE_ONLY__
   }
 
@@ -230,52 +405,85 @@ private:
   static constexpr int32_t m_Size = sizeof(_dataT);
   static constexpr int32_t m_Alignment = alignof(_dataT);
   static constexpr int32_t m_Capacity = _min_capacity;
-#ifdef __SYCL_DEVICE_ONLY__
-  static constexpr struct ConstantPipeStorage m_Storage = {m_Size, m_Alignment,
-                                                           m_Capacity};
 
+  static constexpr int32_t m_ready_latency =
+      oneapi::experimental::detail::get_property_or<ready_latency_key,
+                                                    _propertiesT>(
+          ready_latency<0>)
+          .value;
+
+  static constexpr int32_t m_bits_per_symbol =
+      oneapi::experimental::detail::get_property_or<bits_per_symbol_key,
+                                                    _propertiesT>(
+          bits_per_symbol<8>)
+          .value;
+  static constexpr bool m_uses_valid =
+      oneapi::experimental::detail::get_property_or<uses_valid_key,
+                                                    _propertiesT>(uses_valid_on)
+          .value;
+  static constexpr bool m_first_symbol_in_high_order_bits =
+      oneapi::experimental::detail::get_property_or<
+          first_symbol_in_high_order_bits_key, _propertiesT>(
+          first_symbol_in_high_order_bits_off)
+          .value;
+  static constexpr protocol_name m_protocol =
+      oneapi::experimental::detail::get_property_or<protocol_key, _propertiesT>(
+          protocol_avalon_streaming_uses_ready)
+          .value;
+
+public:
+  static constexpr struct ConstantPipeStorageExp m_Storage = {
+#ifdef __SYCL_DEVICE_ONLY__
+      {m_Size, m_Alignment, m_Capacity},
+#endif // __SYCL_DEVICE_ONLY___
+      m_ready_latency,
+      m_bits_per_symbol,
+      m_uses_valid,
+      m_first_symbol_in_high_order_bits,
+      m_protocol};
+
+#ifdef __SYCL_DEVICE_ONLY__
+private:
   // FPGA BE will recognize this function and extract its arguments.
   // TODO: Pass latency control parameters via the __spirv_* builtin when ready.
   template <typename _T>
-  static int32_t
-  __latency_control_nb_read_wrapper(__ocl_RPipeTy<_T> Pipe, _T *Data,
-                                    int32_t AnchorID, int32_t TargetAnchor,
-                                    int32_t Type, int32_t Cycle) {
+  static int32_t __latency_control_nb_read_wrapper(
+      __ocl_RPipeTy<_T> Pipe, _T *Data, int32_t /* AnchorID */,
+      int32_t /* TargetAnchor */, int32_t /* Type */, int32_t /* Cycle */) {
     return __spirv_ReadPipe(Pipe, Data, m_Size, m_Alignment);
   }
 
   // FPGA BE will recognize this function and extract its arguments.
   // TODO: Pass latency control parameters via the __spirv_* builtin when ready.
   template <typename _T>
-  static int32_t
-  __latency_control_nb_write_wrapper(__ocl_WPipeTy<_T> Pipe, const _T *Data,
-                                     int32_t AnchorID, int32_t TargetAnchor,
-                                     int32_t Type, int32_t Cycle) {
+  static int32_t __latency_control_nb_write_wrapper(
+      __ocl_WPipeTy<_T> Pipe, const _T *Data, int32_t /* AnchorID */,
+      int32_t /* TargetAnchor */, int32_t /* Type */, int32_t /* Cycle */) {
     return __spirv_WritePipe(Pipe, Data, m_Size, m_Alignment);
   }
 
   // FPGA BE will recognize this function and extract its arguments.
   // TODO: Pass latency control parameters via the __spirv_* builtin when ready.
   template <typename _T>
-  static void __latency_control_bl_read_wrapper(__ocl_RPipeTy<_T> Pipe,
-                                                _T *Data, int32_t AnchorID,
-                                                int32_t TargetAnchor,
-                                                int32_t Type, int32_t Cycle) {
+  static void __latency_control_bl_read_wrapper(
+      __ocl_RPipeTy<_T> Pipe, _T *Data, int32_t /* AnchorID */,
+      int32_t /* TargetAnchor */, int32_t /* Type */, int32_t /* Cycle */) {
     return __spirv_ReadPipeBlockingINTEL(Pipe, Data, m_Size, m_Alignment);
   }
 
   // FPGA BE will recognize this function and extract its arguments.
   // TODO: Pass latency control parameters via the __spirv_* builtin when ready.
   template <typename _T>
-  static void
-  __latency_control_bl_write_wrapper(__ocl_WPipeTy<_T> Pipe, const _T *Data,
-                                     int32_t AnchorID, int32_t TargetAnchor,
-                                     int32_t Type, int32_t Cycle) {
+  static void __latency_control_bl_write_wrapper(
+      __ocl_WPipeTy<_T> Pipe, const _T *Data, int32_t /* AnchorID*/,
+      int32_t /* TargetAnchor */, int32_t /* Type */, int32_t /* Cycle */) {
     return __spirv_WritePipeBlockingINTEL(Pipe, Data, m_Size, m_Alignment);
   }
 #endif // __SYCL_DEVICE_ONLY__
 };
 
-} // namespace ext::intel::experimental
-} // __SYCL_INLINE_VER_NAMESPACE(_V1)
+} // namespace experimental
+} // namespace intel
+} // namespace ext
+} // namespace _V1
 } // namespace sycl

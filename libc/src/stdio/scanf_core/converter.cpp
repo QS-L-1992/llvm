@@ -9,14 +9,21 @@
 #include "src/stdio/scanf_core/converter.h"
 
 #include "src/__support/ctype_utils.h"
+#include "src/__support/macros/config.h"
 #include "src/stdio/scanf_core/core_structs.h"
 #include "src/stdio/scanf_core/reader.h"
 
+#ifndef LIBC_COPT_SCANF_DISABLE_FLOAT
+#include "src/stdio/scanf_core/float_converter.h"
+#endif // LIBC_COPT_SCANF_DISABLE_FLOAT
+#include "src/stdio/scanf_core/current_pos_converter.h"
+#include "src/stdio/scanf_core/int_converter.h"
+#include "src/stdio/scanf_core/ptr_converter.h"
 #include "src/stdio/scanf_core/string_converter.h"
 
 #include <stddef.h>
 
-namespace __llvm_libc {
+namespace LIBC_NAMESPACE_DECL {
 namespace scanf_core {
 
 int convert(Reader *reader, const FormatSection &to_conv) {
@@ -32,39 +39,37 @@ int convert(Reader *reader, const FormatSection &to_conv) {
   case 'c':
   case '[':
     return convert_string(reader, to_conv);
-    //   case 'd':
-    //   case 'i':
-    //   case 'u':
-    //   case 'o':
-    //   case 'x':
-    //   case 'X':
-    //     ret_val = raw_match(reader, " ");
-    //     if (ret_val != READ_OK)
-    //       return ret_val;
-    //     return convert_int(reader, to_conv);
-    // #ifndef LLVM_LIBC_SCANF_DISABLE_FLOAT
-    //   case 'f':
-    //   case 'F':
-    //   case 'e':
-    //   case 'E':
-    //   case 'a':
-    //   case 'A':
-    //   case 'g':
-    //   case 'G':
-    //     ret_val = raw_match(reader, " ");
-    //     if (ret_val != READ_OK)
-    //       return ret_val;
-    //     return convert_float(reader, to_conv);
-    // #endif // LLVM_LIBC_SCANF_DISABLE_FLOAT
-    // #ifndef LLVM_LIBC_SCANF_DISABLE_WRITE_INT
-    //   case 'n':
-    //     return convert_write_int(reader, to_conv);
-    // #endif // LLVM_LIBC_SCANF_DISABLE_WRITE_INT
-    //   case 'p':
-    //     ret_val = raw_match(reader, " ");
-    //     if (ret_val != READ_OK)
-    //       return ret_val;
-    //     return convert_pointer(reader, to_conv);
+  case 'd':
+  case 'i':
+  case 'u':
+  case 'o':
+  case 'x':
+  case 'X':
+    ret_val = raw_match(reader, " ");
+    if (ret_val != READ_OK)
+      return ret_val;
+    return convert_int(reader, to_conv);
+#ifndef LIBC_COPT_SCANF_DISABLE_FLOAT
+  case 'f':
+  case 'F':
+  case 'e':
+  case 'E':
+  case 'a':
+  case 'A':
+  case 'g':
+  case 'G':
+    ret_val = raw_match(reader, " ");
+    if (ret_val != READ_OK)
+      return ret_val;
+    return convert_float(reader, to_conv);
+#endif // LIBC_COPT_SCANF_DISABLE_FLOAT
+  case 'n':
+    return convert_current_pos(reader, to_conv);
+  case 'p':
+    ret_val = raw_match(reader, " ");
+    if (ret_val != READ_OK)
+      return ret_val;
+    return convert_pointer(reader, to_conv);
   default:
     return raw_match(reader, to_conv.raw_string);
   }
@@ -95,4 +100,4 @@ int raw_match(Reader *reader, cpp::string_view raw_string) {
 }
 
 } // namespace scanf_core
-} // namespace __llvm_libc
+} // namespace LIBC_NAMESPACE_DECL

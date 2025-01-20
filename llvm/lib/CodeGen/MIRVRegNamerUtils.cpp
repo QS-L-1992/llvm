@@ -39,8 +39,6 @@ VRegRenamer::getVRegRenameMap(const std::vector<NamedVReg> &VRegs) {
   StringMap<unsigned> VRegNameCollisionMap;
 
   auto GetUniqueVRegName = [&VRegNameCollisionMap](const NamedVReg &Reg) {
-    if (VRegNameCollisionMap.find(Reg.getName()) == VRegNameCollisionMap.end())
-      VRegNameCollisionMap[Reg.getName()] = 0;
     const unsigned Counter = ++VRegNameCollisionMap[Reg.getName()];
     return Reg.getName() + "__" + std::to_string(Counter);
   };
@@ -77,7 +75,7 @@ std::string VRegRenamer::getInstructionOpcodeHash(MachineInstr &MI) {
           MO.getType(), MO.getTargetFlags(),
           MO.getFPImm()->getValueAPF().bitcastToAPInt().getZExtValue());
     case MachineOperand::MO_Register:
-      if (Register::isVirtualRegister(MO.getReg()))
+      if (MO.getReg().isVirtual())
         return MRI.getVRegDef(MO.getReg())->getOpcode();
       return MO.getReg();
     case MachineOperand::MO_Immediate:
@@ -113,6 +111,7 @@ std::string VRegRenamer::getInstructionOpcodeHash(MachineInstr &MI) {
     case MachineOperand::MO_Metadata:
     case MachineOperand::MO_MCSymbol:
     case MachineOperand::MO_ShuffleMask:
+    case MachineOperand::MO_DbgInstrRef:
       return 0;
     }
     llvm_unreachable("Unexpected MachineOperandType.");
@@ -122,7 +121,7 @@ std::string VRegRenamer::getInstructionOpcodeHash(MachineInstr &MI) {
   llvm::transform(MI.uses(), std::back_inserter(MIOperands), GetHashableMO);
 
   for (const auto *Op : MI.memoperands()) {
-    MIOperands.push_back((unsigned)Op->getSize());
+    MIOperands.push_back((unsigned)Op->getSize().getValue());
     MIOperands.push_back((unsigned)Op->getFlags());
     MIOperands.push_back((unsigned)Op->getOffset());
     MIOperands.push_back((unsigned)Op->getSuccessOrdering());
@@ -155,7 +154,7 @@ bool VRegRenamer::renameInstsInMBB(MachineBasicBlock *MBB) {
     // Look for instructions that define VRegs in operand 0.
     MachineOperand &MO = Candidate.getOperand(0);
     // Avoid non regs, instructions defining physical regs.
-    if (!MO.isReg() || !Register::isVirtualRegister(MO.getReg()))
+    if (!MO.isReg() || !MO.getReg().isVirtual())
       continue;
     VRegs.push_back(
         NamedVReg(MO.getReg(), Prefix + getInstructionOpcodeHash(Candidate)));

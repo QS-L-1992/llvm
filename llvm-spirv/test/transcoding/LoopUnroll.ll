@@ -50,8 +50,15 @@
 ; RUN: llvm-spirv %t.bc -o %t.spv
 ; RUN: llvm-spirv -to-text %t.spv -o %t.spt
 ; RUN: FileCheck < %t.spt %s --check-prefix=CHECK-SPIRV
-; RUN: llvm-spirv -r -emit-opaque-pointers %t.spv -o %t.rev.bc
+; RUN: llvm-spirv -r %t.spv -o %t.rev.bc
 ; RUN: llvm-dis %t.rev.bc -o - | FileCheck %s --check-prefixes=CHECK-LLVM
+; RUN: llvm-spirv %t.bc -o %t.spv --spirv-max-version=1.1
+; RUN: llvm-spirv -to-text %t.spv -o %t.spt
+; RUN: FileCheck < %t.spt %s --check-prefix=CHECK-SPIRV-NEGATIVE
+
+; Check SPIR-V versions in a format magic number + version
+; CHECK-SPIRV: 119734787 66560
+; CHECK-SPIRV-NEGATIVE: 119734787 65536
 
 target datalayout = "e-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024"
 target triple = "spir64"
@@ -63,12 +70,12 @@ entry:
 ; CHECK-SPIRV: Label
   %i = alloca i32, align 4
   %x = alloca i32, align 4
-  store i32 0, i32* %i, align 4
+  store i32 0, ptr %i, align 4
   br label %for.cond
 
 for.cond:                                         ; preds = %for.inc, %entry
 ; CHECK-SPIRV: Label [[#HEADER:]]
-  %0 = load i32, i32* %i, align 4
+  %0 = load i32, ptr %i, align 4
   %cmp = icmp slt i32 %0, 1024
 ; Per SPIRV spec p3.23 "DontUnroll" loop control = 0x2
 ; CHECK-SPIRV: LoopMerge [[#MERGEBLOCK:]] [[#CONTINUE:]] 2
@@ -77,7 +84,7 @@ for.cond:                                         ; preds = %for.inc, %entry
 
 for.body:                                         ; preds = %for.cond
 ; CHECK-SPIRV: Label
-  %1 = load i32, i32* %i, align 4
+  %1 = load i32, ptr %i, align 4
   %rem = srem i32 %1, 2
   %tobool = icmp ne i32 %rem, 0
   br i1 %tobool, label %if.then, label %if.end
@@ -88,15 +95,15 @@ if.then:                                          ; preds = %for.body
 
 if.end:                                           ; preds = %for.body
 ; CHECK-SPIRV: Label
-  %2 = load i32, i32* %i, align 4
-  store i32 %2, i32* %x, align 4
+  %2 = load i32, ptr %i, align 4
+  store i32 %2, ptr %x, align 4
   br label %for.inc
 
 for.inc:                                          ; preds = %if.end, %if.then
 ; CHECK-SPIRV: Label [[#CONTINUE]]
-  %3 = load i32, i32* %i, align 4
+  %3 = load i32, ptr %i, align 4
   %inc = add nsw i32 %3, 1
-  store i32 %inc, i32* %i, align 4
+  store i32 %inc, ptr %i, align 4
   br label %for.cond, !llvm.loop !5
 ; CHECK-LLVM: br label %for.cond, !llvm.loop ![[#UNROLLDISABLE:]]
 ; CHECK-SPIRV: Branch [[#HEADER]]
@@ -113,23 +120,24 @@ entry:
 ; CHECK-SPIRV: Label
   %i = alloca i32, align 4
   %x = alloca i32, align 4
-  store i32 1024, i32* %i, align 4
+  store i32 1024, ptr %i, align 4
   br label %while.cond
 
 while.cond:                                       ; preds = %if.end, %if.then, %entry
 ; CHECK-SPIRV: Label [[#HEADER:]]
-  %0 = load i32, i32* %i, align 4
+  %0 = load i32, ptr %i, align 4
   %dec = add nsw i32 %0, -1
-  store i32 %dec, i32* %i, align 4
+  store i32 %dec, ptr %i, align 4
   %cmp = icmp sgt i32 %0, 0
 ; Per SPIRV spec p3.23 "Unroll" loop control = 0x1
 ; CHECK-SPIRV: LoopMerge [[#MERGEBLOCK:]] [[#CONTINUE:]] 256 8
 ; CHECK-SPIRV: BranchConditional [[#]] [[#]] [[#MERGEBLOCK]]
+; CHECK-SPIRV-NEGATIVE-NOT: LoopMerge {{.*}} 256
   br i1 %cmp, label %while.body, label %while.end
 
 while.body:                                       ; preds = %while.cond
 ; CHECK-SPIRV: Label
-  %1 = load i32, i32* %i, align 4
+  %1 = load i32, ptr %i, align 4
   %rem = srem i32 %1, 2
   %tobool = icmp ne i32 %rem, 0
   br i1 %tobool, label %if.then, label %if.end
@@ -146,8 +154,8 @@ if.then:                                          ; preds = %while.body
 
 if.end:                                           ; preds = %while.body
 ; CHECK-SPIRV: Label
-  %2 = load i32, i32* %i, align 4
-  store i32 %2, i32* %x, align 4
+  %2 = load i32, ptr %i, align 4
+  store i32 %2, ptr %x, align 4
   br label %while.cond, !llvm.loop !7
 
 while.end:                                        ; preds = %while.cond
@@ -162,12 +170,12 @@ entry:
 ; CHECK-SPIRV: Label
   %i = alloca i32, align 4
   %x = alloca i32, align 4
-  store i32 1024, i32* %i, align 4
+  store i32 1024, ptr %i, align 4
   br label %do.body
 
 do.body:                                          ; preds = %do.cond, %entry
 ; CHECK-SPIRV: Label [[#HEADER:]]
-  %0 = load i32, i32* %i, align 4
+  %0 = load i32, ptr %i, align 4
   %rem = srem i32 %0, 2
   %tobool = icmp ne i32 %rem, 0
 ; Per SPIRV spec p3.23 "Unroll" loop control = 0x1
@@ -181,15 +189,15 @@ if.then:                                          ; preds = %do.body
 
 if.end:                                           ; preds = %do.body
 ; CHECK-SPIRV: Label
-  %1 = load i32, i32* %i, align 4
-  store i32 %1, i32* %x, align 4
+  %1 = load i32, ptr %i, align 4
+  store i32 %1, ptr %x, align 4
   br label %do.cond
 
 do.cond:                                          ; preds = %if.end, %if.then
 ; CHECK-SPIRV: Label [[#CONTINUE]]
-  %2 = load i32, i32* %i, align 4
+  %2 = load i32, ptr %i, align 4
   %dec = add nsw i32 %2, -1
-  store i32 %dec, i32* %i, align 4
+  store i32 %dec, ptr %i, align 4
   %cmp = icmp sgt i32 %2, 0
 ; CHECK-SPIRV: BranchConditional [[#]] [[#HEADER]] [[#MERGEBLOCK]]
 ; CHECK-LLVM: br i1 %cmp, label %do.body, label %do.end, !llvm.loop ![[#UNROLLENABLE1:]]
@@ -207,12 +215,12 @@ entry:
 ; CHECK-SPIRV: Label
   %i = alloca i32, align 4
   %x = alloca i32, align 4
-  store i32 1024, i32* %i, align 4
+  store i32 1024, ptr %i, align 4
   br label %for.body
 
 for.body:                                          ; preds = %for.cond, %entry
 ; CHECK-SPIRV: Label [[#HEADER:]]
-  %0 = load i32, i32* %i, align 4
+  %0 = load i32, ptr %i, align 4
   %rem = srem i32 %0, 2
   %tobool = icmp ne i32 %rem, 0
 ; Per SPIRV spec p3.23 "Unroll" loop control = 0x1
@@ -226,15 +234,15 @@ if.then:                                          ; preds = %for.body
 
 if.end:                                           ; preds = %for.body
 ; CHECK-SPIRV: Label
-  %1 = load i32, i32* %i, align 4
-  store i32 %1, i32* %x, align 4
+  %1 = load i32, ptr %i, align 4
+  store i32 %1, ptr %x, align 4
   br label %for.cond
 
 for.cond:                                          ; preds = %if.end, %if.then
 ; CHECK-SPIRV: Label [[#CONTINUE]]
-  %2 = load i32, i32* %i, align 4
+  %2 = load i32, ptr %i, align 4
   %dec = add nsw i32 %2, -1
-  store i32 %dec, i32* %i, align 4
+  store i32 %dec, ptr %i, align 4
   %cmp = icmp sgt i32 %2, 0
 ; CHECK-SPIRV: BranchConditional [[#]] [[#MERGEBLOCK]] [[#HEADER]]
 ; CHECK-LLVM: br i1 %cmp, label %for.end, label %for.body, !llvm.loop ![[#UNROLLENABLE2:]]

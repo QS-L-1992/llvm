@@ -11,7 +11,6 @@
 
 ; Check first in trapping mode.
 ; RUN: llvm-lto2 run %t2.o -save-temps -pass-remarks=. \
-; RUN:   -opaque-pointers \
 ; RUN:	 -wholeprogramdevirt-check=trap \
 ; RUN:   -o %t3 \
 ; RUN:   -r=%t2.o,test,px \
@@ -22,7 +21,6 @@
 
 ; Check next in fallback mode.
 ; RUN: llvm-lto2 run %t2.o -save-temps -pass-remarks=. \
-; RUN:   -opaque-pointers \
 ; RUN:	 -wholeprogramdevirt-check=fallback \
 ; RUN:   -o %t3 \
 ; RUN:   -r=%t2.o,test,px \
@@ -42,7 +40,7 @@ target triple = "x86_64-grtev4-linux-gnu"
 @_ZTV1B = constant { [4 x i8*] } { [4 x i8*] [i8* null, i8* undef, i8* bitcast (i32 (%struct.B*, i32)* @_ZN1B1fEi to i8*), i8* bitcast (i32 (%struct.A*, i32)* @_ZN1A1nEi to i8*)] }, !type !0, !type !1, !vcall_visibility !5
 
 
-; CHECK-LABEL: define i32 @test
+; CHECK-LABEL: define {{(noundef )?}}i32 @test
 define i32 @test(%struct.A* %obj, i32 %a) {
 entry:
   %0 = bitcast %struct.A* %obj to i8***

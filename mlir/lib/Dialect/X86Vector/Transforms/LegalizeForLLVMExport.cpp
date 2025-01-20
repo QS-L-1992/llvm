@@ -22,11 +22,11 @@ using namespace mlir::x86vector;
 /// Extracts the "main" vector element type from the given X86Vector operation.
 template <typename OpTy>
 static Type getSrcVectorElementType(OpTy op) {
-  return op.getSrc().getType().template cast<VectorType>().getElementType();
+  return cast<VectorType>(op.getSrc().getType()).getElementType();
 }
 template <>
 Type getSrcVectorElementType(Vp2IntersectOp op) {
-  return op.getA().getType().template cast<VectorType>().getElementType();
+  return cast<VectorType>(op.getA().getType()).getElementType();
 }
 
 namespace {
@@ -37,11 +37,11 @@ namespace {
 /// results of multi-result intrinsic ops.
 template <typename OpTy, typename Intr32OpTy, typename Intr64OpTy>
 struct LowerToIntrinsic : public OpConversionPattern<OpTy> {
-  explicit LowerToIntrinsic(LLVMTypeConverter &converter)
+  explicit LowerToIntrinsic(const LLVMTypeConverter &converter)
       : OpConversionPattern<OpTy>(converter, &converter.getContext()) {}
 
-  LLVMTypeConverter &getTypeConverter() const {
-    return *static_cast<LLVMTypeConverter *>(
+  const LLVMTypeConverter &getTypeConverter() const {
+    return *static_cast<const LLVMTypeConverter *>(
         OpConversionPattern<OpTy>::getTypeConverter());
   }
 
@@ -79,7 +79,7 @@ struct MaskCompressOpConversion
       src = rewriter.create<arith::ConstantOp>(op.getLoc(), opType,
                                                op.getConstantSrcAttr());
     } else {
-      Attribute zeroAttr = rewriter.getZeroAttr(opType);
+      auto zeroAttr = rewriter.getZeroAttr(opType);
       src = rewriter.create<arith::ConstantOp>(op->getLoc(), opType, zeroAttr);
     }
 
@@ -135,7 +135,7 @@ template <typename... Args>
 struct RegistryImpl {
   /// Registers the patterns specializing the "main" op to one of the
   /// "intrinsic" ops depending on elemental type.
-  static void registerPatterns(LLVMTypeConverter &converter,
+  static void registerPatterns(const LLVMTypeConverter &converter,
                                RewritePatternSet &patterns) {
     patterns
         .add<LowerToIntrinsic<typename Args::MainOp, typename Args::Intr32Op,
@@ -159,7 +159,7 @@ using Registry = RegistryImpl<
 
 /// Populate the given list with patterns that convert from X86Vector to LLVM.
 void mlir::populateX86VectorLegalizeForLLVMExportPatterns(
-    LLVMTypeConverter &converter, RewritePatternSet &patterns) {
+    const LLVMTypeConverter &converter, RewritePatternSet &patterns) {
   Registry::registerPatterns(converter, patterns);
   patterns.add<MaskCompressOpConversion, RsqrtOpConversion, DotOpConversion>(
       converter);

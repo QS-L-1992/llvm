@@ -82,10 +82,14 @@ static void writeDescription(const CommentInfo &I, raw_ostream &OS) {
     OS << genEmphasis(I.Name) << " " << I.Text;
   } else if (I.Kind == "ParamCommandComment") {
     std::string Direction = I.Explicit ? (" " + I.Direction).str() : "";
-    OS << genEmphasis(I.ParamName) << I.Text << Direction << "\n\n";
+    OS << genEmphasis(I.ParamName) << I.Text << Direction;
+    for (const auto &Child : I.Children)
+      writeDescription(*Child, OS);
   } else if (I.Kind == "TParamCommandComment") {
     std::string Direction = I.Explicit ? (" " + I.Direction).str() : "";
-    OS << genEmphasis(I.ParamName) << I.Text << Direction << "\n\n";
+    OS << genEmphasis(I.ParamName) << I.Text << Direction;
+    for (const auto &Child : I.Children)
+      writeDescription(*Child, OS);
   } else if (I.Kind == "VerbatimBlockComment") {
     for (const auto &Child : I.Children)
       writeDescription(*Child, OS);
@@ -153,17 +157,17 @@ static void genMarkdown(const ClangDocContext &CDCtx, const FunctionInfo &I,
   for (const auto &N : I.Params) {
     if (!First)
       Stream << ", ";
-    Stream << N.Type.Name + " " + N.Name;
+    Stream << N.Type.QualName + " " + N.Name;
     First = false;
   }
   writeHeader(I.Name, 3, OS);
   std::string Access = getAccessSpelling(I.Access).str();
   if (Access != "")
-    writeLine(genItalic(Access + " " + I.ReturnType.Type.Name + " " + I.Name +
-                        "(" + Stream.str() + ")"),
+    writeLine(genItalic(Access + " " + I.ReturnType.Type.QualName + " " +
+                        I.Name + "(" + Stream.str() + ")"),
               OS);
   else
-    writeLine(genItalic(I.ReturnType.Type.Name + " " + I.Name + "(" +
+    writeLine(genItalic(I.ReturnType.Type.QualName + " " + I.Name + "(" +
                         Stream.str() + ")"),
               OS);
   if (I.DefLoc)
@@ -387,7 +391,7 @@ MDGenerator::generateDocs(StringRef RootDir,
     llvm::SmallString<128> Path;
     llvm::sys::path::native(RootDir, Path);
     llvm::sys::path::append(Path, Info->getRelativeFilePath(""));
-    if (CreatedDirs.find(Path) == CreatedDirs.end()) {
+    if (!CreatedDirs.contains(Path)) {
       if (std::error_code Err = llvm::sys::fs::create_directories(Path);
           Err != std::error_code()) {
         return llvm::createStringError(Err, "Failed to create directory '%s'.",

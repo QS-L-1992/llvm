@@ -8,6 +8,7 @@
 
 #include "llvm/Transforms/Instrumentation/BoundsChecking.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
 #include "llvm/Analysis/ScalarEvolution.h"
@@ -23,13 +24,10 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Value.h"
-#include "llvm/InitializePasses.h"
-#include "llvm/Pass.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
-#include <cstdint>
 #include <utility>
 
 using namespace llvm;
@@ -45,6 +43,10 @@ STATISTIC(ChecksUnable, "Bounds checks unable to add");
 
 using BuilderTy = IRBuilder<TargetFolder>;
 
+BoundsCheckingPass::BoundsCheckingOptions::BoundsCheckingOptions(
+    ReportingMode Mode, bool Merge)
+    : Mode(Mode), Merge(Merge) {}
+
 /// Gets the conditions under which memory accessing instructions will overflow.
 ///
 /// \p Ptr is the pointer that will be read/written, and \p InstVal is either
@@ -56,23 +58,23 @@ static Value *getBoundsCheckCond(Value *Ptr, Value *InstVal,
                                  const DataLayout &DL, TargetLibraryInfo &TLI,
                                  ObjectSizeOffsetEvaluator &ObjSizeEval,
                                  BuilderTy &IRB, ScalarEvolution &SE) {
-  uint64_t NeededSize = DL.getTypeStoreSize(InstVal->getType());
+  TypeSize NeededSize = DL.getTypeStoreSize(InstVal->getType());
   LLVM_DEBUG(dbgs() << "Instrument " << *Ptr << " for " << Twine(NeededSize)
                     << " bytes\n");
 
-  SizeOffsetEvalType SizeOffset = ObjSizeEval.compute(Ptr);
+  SizeOffsetValue SizeOffset = ObjSizeEval.compute(Ptr);
 
-  if (!ObjSizeEval.bothKnown(SizeOffset)) {
+  if (!SizeOffset.bothKnown()) {
     ++ChecksUnable;
     return nullptr;
   }
 
-  Value *Size   = SizeOffset.first;
-  Value *Offset = SizeOffset.second;
+  Value *Size = SizeOffset.Size;
+  Value *Offset = SizeOffset.Offset;
   ConstantInt *SizeCI = dyn_cast<ConstantInt>(Size);
 
-  Type *IntTy = DL.getIntPtrType(Ptr->getType());
-  Value *NeededSizeVal = ConstantInt::get(IntTy, NeededSize);
+  Type *IndexTy = DL.getIndexType(Ptr->getType());
+  Value *NeededSizeVal = IRB.CreateTypeSize(IndexTy, NeededSize);
 
   auto SizeRange = SE.getUnsignedRange(SE.getSCEV(Size));
   auto OffsetRange = SE.getUnsignedRange(SE.getSCEV(Offset));
@@ -97,11 +99,35 @@ static Value *getBoundsCheckCond(Value *Ptr, Value *InstVal,
   Value *Or = IRB.CreateOr(Cmp2, Cmp3);
   if ((!SizeCI || SizeCI->getValue().slt(0)) &&
       !SizeRange.getSignedMin().isNonNegative()) {
-    Value *Cmp1 = IRB.CreateICmpSLT(Offset, ConstantInt::get(IntTy, 0));
+    Value *Cmp1 = IRB.CreateICmpSLT(Offset, ConstantInt::get(IndexTy, 0));
     Or = IRB.CreateOr(Cmp1, Or);
   }
 
   return Or;
+}
+
+static CallInst *InsertTrap(BuilderTy &IRB, bool DebugTrapBB) {
+  if (!DebugTrapBB)
+    return IRB.CreateIntrinsic(Intrinsic::trap, {}, {});
+  // FIXME: Ideally we would use the SanitizerHandler::OutOfBounds constant.
+  return IRB.CreateIntrinsic(
+      Intrinsic::ubsantrap, {},
+      ConstantInt::get(IRB.getInt8Ty(),
+                       IRB.GetInsertBlock()->getParent()->size()));
+}
+
+static CallInst *InsertCall(BuilderTy &IRB, bool MayReturn, StringRef Name) {
+  Function *Fn = IRB.GetInsertBlock()->getParent();
+  LLVMContext &Ctx = Fn->getContext();
+  llvm::AttrBuilder B(Ctx);
+  B.addAttribute(llvm::Attribute::NoUnwind);
+  if (!MayReturn)
+    B.addAttribute(llvm::Attribute::NoReturn);
+  FunctionCallee Callee = Fn->getParent()->getOrInsertFunction(
+      Name,
+      llvm::AttributeList::get(Ctx, llvm::AttributeList::FunctionIndex, B),
+      Type::getVoidTy(Ctx));
+  return IRB.CreateCall(Callee);
 }
 
 /// Adds run-time bounds checks to memory accessing instructions.
@@ -126,24 +152,60 @@ static void insertBoundsCheck(Value *Or, BuilderTy &IRB, GetTrapBBT GetTrapBB) {
   BasicBlock *Cont = OldBB->splitBasicBlock(SplitI);
   OldBB->getTerminator()->eraseFromParent();
 
+  BasicBlock *TrapBB = GetTrapBB(IRB, Cont);
+
   if (C) {
     // If we have a constant zero, unconditionally branch.
     // FIXME: We should really handle this differently to bypass the splitting
     // the block.
-    BranchInst::Create(GetTrapBB(IRB), OldBB);
+    BranchInst::Create(TrapBB, OldBB);
     return;
   }
 
   // Create the conditional branch.
-  BranchInst::Create(GetTrapBB(IRB), Cont, Or, OldBB);
+  BranchInst::Create(TrapBB, Cont, Or, OldBB);
 }
 
+struct ReportingOpts {
+  bool MayReturn = false;
+  bool UseTrap = false;
+  bool MinRuntime = false;
+  bool MayMerge = true;
+  StringRef Name;
+
+  ReportingOpts(BoundsCheckingPass::ReportingMode Mode, bool Merge) {
+    switch (Mode) {
+    case BoundsCheckingPass::ReportingMode::Trap:
+      UseTrap = true;
+      break;
+    case BoundsCheckingPass::ReportingMode::MinRuntime:
+      Name = "__ubsan_handle_local_out_of_bounds_minimal";
+      MinRuntime = true;
+      MayReturn = true;
+      break;
+    case BoundsCheckingPass::ReportingMode::MinRuntimeAbort:
+      Name = "__ubsan_handle_local_out_of_bounds_minimal_abort";
+      MinRuntime = true;
+      break;
+    case BoundsCheckingPass::ReportingMode::FullRuntime:
+      Name = "__ubsan_handle_local_out_of_bounds";
+      MayReturn = true;
+      break;
+    case BoundsCheckingPass::ReportingMode::FullRuntimeAbort:
+      Name = "__ubsan_handle_local_out_of_bounds_abort";
+      break;
+    }
+
+    MayMerge = Merge;
+  }
+};
+
 static bool addBoundsChecking(Function &F, TargetLibraryInfo &TLI,
-                              ScalarEvolution &SE) {
+                              ScalarEvolution &SE, const ReportingOpts &Opts) {
   if (F.hasFnAttribute(Attribute::NoSanitizeBounds))
     return false;
 
-  const DataLayout &DL = F.getParent()->getDataLayout();
+  const DataLayout &DL = F.getDataLayout();
   ObjectSizeOpts EvalOpts;
   EvalOpts.RoundToAlign = true;
   EvalOpts.EvalMode = ObjectSizeOpts::Mode::ExactUnderlyingSizeAndOffset;
@@ -180,30 +242,43 @@ static bool addBoundsChecking(Function &F, TargetLibraryInfo &TLI,
   // Create a trapping basic block on demand using a callback. Depending on
   // flags, this will either create a single block for the entire function or
   // will create a fresh block every time it is called.
-  BasicBlock *TrapBB = nullptr;
-  auto GetTrapBB = [&TrapBB](BuilderTy &IRB) {
-    if (TrapBB && SingleTrapBB)
-      return TrapBB;
-
+  BasicBlock *ReuseTrapBB = nullptr;
+  auto GetTrapBB = [&ReuseTrapBB, &Opts](BuilderTy &IRB, BasicBlock *Cont) {
     Function *Fn = IRB.GetInsertBlock()->getParent();
-    // FIXME: This debug location doesn't make a lot of sense in the
-    // `SingleTrapBB` case.
     auto DebugLoc = IRB.getCurrentDebugLocation();
     IRBuilder<>::InsertPointGuard Guard(IRB);
-    TrapBB = BasicBlock::Create(Fn->getContext(), "trap", Fn);
+
+    // Create a trapping basic block on demand using a callback. Depending on
+    // flags, this will either create a single block for the entire function or
+    // will create a fresh block every time it is called.
+    if (ReuseTrapBB)
+      return ReuseTrapBB;
+
+    BasicBlock *TrapBB = BasicBlock::Create(Fn->getContext(), "trap", Fn);
     IRB.SetInsertPoint(TrapBB);
 
-    auto *F = Intrinsic::getDeclaration(Fn->getParent(), Intrinsic::trap);
-    CallInst *TrapCall = IRB.CreateCall(F, {});
-    TrapCall->setDoesNotReturn();
+    bool DebugTrapBB = !Opts.MayMerge;
+    CallInst *TrapCall = Opts.UseTrap
+                             ? InsertTrap(IRB, DebugTrapBB)
+                             : InsertCall(IRB, Opts.MayReturn, Opts.Name);
+    if (DebugTrapBB)
+      TrapCall->addFnAttr(llvm::Attribute::NoMerge);
+
     TrapCall->setDoesNotThrow();
     TrapCall->setDebugLoc(DebugLoc);
-    IRB.CreateUnreachable();
+    if (Opts.MayReturn) {
+      IRB.CreateBr(Cont);
+    } else {
+      TrapCall->setDoesNotReturn();
+      IRB.CreateUnreachable();
+    }
+
+    if (!Opts.MayReturn && SingleTrapBB && !DebugTrapBB)
+      ReuseTrapBB = TrapBB;
 
     return TrapBB;
   };
 
-  // Add the checks.
   for (const auto &Entry : TrapInfo) {
     Instruction *Inst = Entry.first;
     BuilderTy IRB(Inst->getParent(), BasicBlock::iterator(Inst), TargetFolder(DL));
@@ -217,8 +292,35 @@ PreservedAnalyses BoundsCheckingPass::run(Function &F, FunctionAnalysisManager &
   auto &TLI = AM.getResult<TargetLibraryAnalysis>(F);
   auto &SE = AM.getResult<ScalarEvolutionAnalysis>(F);
 
-  if (!addBoundsChecking(F, TLI, SE))
+  if (!addBoundsChecking(F, TLI, SE,
+                         ReportingOpts(Options.Mode, Options.Merge)))
     return PreservedAnalyses::all();
 
   return PreservedAnalyses::none();
+}
+
+void BoundsCheckingPass::printPipeline(
+    raw_ostream &OS, function_ref<StringRef(StringRef)> MapClassName2PassName) {
+  static_cast<PassInfoMixin<BoundsCheckingPass> *>(this)->printPipeline(
+      OS, MapClassName2PassName);
+  switch (Options.Mode) {
+  case ReportingMode::Trap:
+    OS << "<trap";
+    break;
+  case ReportingMode::MinRuntime:
+    OS << "<min-rt";
+    break;
+  case ReportingMode::MinRuntimeAbort:
+    OS << "<min-rt-abort";
+    break;
+  case ReportingMode::FullRuntime:
+    OS << "<rt";
+    break;
+  case ReportingMode::FullRuntimeAbort:
+    OS << "<rt-abort";
+    break;
+  }
+  if (Options.Merge)
+    OS << ";merge";
+  OS << ">";
 }

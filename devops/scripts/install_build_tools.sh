@@ -7,7 +7,7 @@ apt update && apt install -yqq \
       ccache \
       git \
       python3 \
-      python3-distutils \
+      python3-psutil \
       python-is-python3 \
       python3-pip \
       zstd \
@@ -17,7 +17,12 @@ apt update && apt install -yqq \
       libva-dev \
       libtool \
       wget \
-      sudo
-
-pip3 install psutil
-
+      sudo \
+      zstd \
+      zip \
+      unzip \
+      jq \
+      curl \
+      libhwloc-dev \
+      libzstd-dev \
+      time

@@ -12,6 +12,8 @@
   integer, pointer :: a(:)
   integer, parameter :: const_id = 66666
   procedure(), pointer :: procptr
+  external external
+  intrinsic acos
 
   namelist /nnn/ nn1, nn2
 
@@ -32,6 +34,7 @@
   write(unit=10) 'Ok'
   write(*, nnn)
   write(10, nnn)
+  !ERROR: If UNIT=internal-file appears, FMT or NML must also appear
   write(internal_file)
   write(internal_file, *)
   write(internal_file, fmt=*)
@@ -53,7 +56,7 @@
   allocate(a(8), stat=stat8)
 
   !ERROR: Duplicate UNIT specifier
-  write(internal_file, unit=*)
+  write(internal_file, unit=*, fmt=*)
 
   !ERROR: WRITE statement must have a UNIT specifier
   write(nml=nnn)
@@ -82,6 +85,7 @@
   !ERROR: If UNIT=internal-file appears, POS must not appear
   write(internal_file, err=9, pos=n, nml=nnn)
 
+  !ERROR: If UNIT=internal-file appears, FMT or NML must also appear
   !ERROR: If UNIT=internal-file appears, REC must not appear
   write(internal_file, rec=n, err=9)
 
@@ -104,7 +108,7 @@
   write(*, asynchronous='yes')
 
   !ERROR: If ASYNCHRONOUS='YES' appears, UNIT=number must also appear
-  write(internal_file, asynchronous='yes')
+  write(internal_file, *, asynchronous='yes')
 
   !ERROR: If ID appears, ASYNCHRONOUS='YES' must also appear
   write(10, *, id=id) "Ok"
@@ -134,8 +138,12 @@
 
   write(*, '(X)')
 
-  !ERROR: Output item must not be a procedure pointer
-  print*, n1, procptr, n2
+  !ERROR: Output item must not be a procedure
+  print*, procptr
+  !ERROR: Output item must not be a procedure
+  print*, acos
+  !ERROR: Output item must not be a procedure
+  print*, external
 
 1 format (A)
 9 continue

@@ -16,14 +16,12 @@
 
 #include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/Hashing.h"
-#include "llvm/ADT/Optional.h"
-#include "llvm/Support/Endian.h"
+#include <optional>
 #include <string>
 #include <tuple>
 
 namespace llvm {
-template <typename HasherT, support::endianness Endianness>
-class HashBuilderImpl;
+template <typename HasherT, llvm::endianness Endianness> class HashBuilder;
 class raw_ostream;
 class StringRef;
 
@@ -73,21 +71,21 @@ public:
   unsigned getMajor() const { return Major; }
 
   /// Retrieve the minor version number, if provided.
-  Optional<unsigned> getMinor() const {
+  std::optional<unsigned> getMinor() const {
     if (!HasMinor)
       return std::nullopt;
     return Minor;
   }
 
   /// Retrieve the subminor version number, if provided.
-  Optional<unsigned> getSubminor() const {
+  std::optional<unsigned> getSubminor() const {
     if (!HasSubminor)
       return std::nullopt;
     return Subminor;
   }
 
   /// Retrieve the build version number, if provided.
-  Optional<unsigned> getBuild() const {
+  std::optional<unsigned> getBuild() const {
     if (!HasBuild)
       return std::nullopt;
     return Build;
@@ -174,8 +172,8 @@ public:
     return hash_combine(VT.Major, VT.Minor, VT.Subminor, VT.Build);
   }
 
-  template <typename HasherT, llvm::support::endianness Endianness>
-  friend void addHash(HashBuilderImpl<HasherT, Endianness> &HBuilder,
+  template <typename HasherT, llvm::endianness Endianness>
+  friend void addHash(HashBuilder<HasherT, Endianness> &HBuilder,
                       const VersionTuple &VT) {
     HBuilder.add(VT.Major, VT.Minor, VT.Subminor, VT.Build);
   }

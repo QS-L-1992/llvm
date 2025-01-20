@@ -21,10 +21,10 @@
  */
 
 #include <clc/clc.h>
+#include <clc/clcmacro.h>
 
 #include "ep_log.h"
 #include "math.h"
-#include <clcmacro.h>
 
 _CLC_OVERLOAD _CLC_DEF  float acosh(float x) {
     uint ux = as_uint(x);
@@ -117,11 +117,19 @@ _CLC_OVERLOAD _CLC_DEF double acosh(double x) {
 
     ret = ux >= 0x7FF0000000000000 ? x : ret;
     ret = x == 1.0 ? 0.0 : ret;
-    ret = (ux & SIGNBIT_DP64) != 0UL | x < 1.0 ? as_double(QNANBITPATT_DP64) : ret;
+    ret = ((ux & SIGNBIT_DP64) != 0UL | x < 1.0) ? as_double(QNANBITPATT_DP64) : ret;
 
     return ret;
 }
 
 _CLC_UNARY_VECTORIZE(_CLC_OVERLOAD _CLC_DEF, double, acosh, double)
+
+#endif
+
+#ifdef cl_khr_fp16
+
+#pragma OPENCL EXTENSION cl_khr_fp16 : enable
+
+_CLC_DEFINE_UNARY_BUILTIN_FP16(acosh)
 
 #endif

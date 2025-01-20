@@ -15,6 +15,7 @@
 
 #include "mlir/IR/Location.h"
 #include <functional>
+#include <optional>
 
 namespace llvm {
 class MemoryBuffer;
@@ -24,7 +25,6 @@ class SourceMgr;
 
 namespace mlir {
 class DiagnosticEngine;
-struct LogicalResult;
 class MLIRContext;
 class Operation;
 class OperationName;
@@ -183,7 +183,8 @@ public:
   Diagnostic &operator<<(StringAttr val);
 
   /// Stream in a string literal.
-  Diagnostic &operator<<(const char *val) {
+  template <size_t n>
+  Diagnostic &operator<<(const char (&val)[n]) {
     arguments.push_back(DiagnosticArgument(val));
     return *this;
   }
@@ -244,7 +245,7 @@ public:
   /// Attaches a note to this diagnostic. A new location may be optionally
   /// provided, if not, then the location defaults to the one specified for this
   /// diagnostic. Notes may not be attached to other notes.
-  Diagnostic &attachNote(Optional<Location> noteLoc = std::nullopt);
+  Diagnostic &attachNote(std::optional<Location> noteLoc = std::nullopt);
 
   using note_iterator = llvm::pointee_iterator<NoteVector::iterator>;
   using const_note_iterator =
@@ -271,6 +272,9 @@ public:
     return failure();
   }
 
+  /// Returns the current list of diagnostic metadata.
+  SmallVectorImpl<DiagnosticArgument> &getMetadata() { return metadata; }
+
 private:
   Diagnostic(const Diagnostic &rhs) = delete;
   Diagnostic &operator=(const Diagnostic &rhs) = delete;
@@ -290,6 +294,9 @@ private:
 
   /// A list of attached notes.
   NoteVector notes;
+
+  /// A list of metadata attached to this Diagnostic.
+  SmallVector<DiagnosticArgument, 0> metadata;
 };
 
 inline raw_ostream &operator<<(raw_ostream &os, const Diagnostic &diag) {
@@ -342,7 +349,7 @@ public:
   }
 
   /// Attaches a note to this diagnostic.
-  Diagnostic &attachNote(Optional<Location> noteLoc = std::nullopt) {
+  Diagnostic &attachNote(std::optional<Location> noteLoc = std::nullopt) {
     assert(isActive() && "diagnostic not active");
     return impl->attachNote(noteLoc);
   }
@@ -393,7 +400,7 @@ private:
   DiagnosticEngine *owner = nullptr;
 
   /// The raw diagnostic that is inflight to be reported.
-  Optional<Diagnostic> impl;
+  std::optional<Diagnostic> impl;
 };
 
 //===----------------------------------------------------------------------===//
@@ -487,19 +494,19 @@ InFlightDiagnostic emitRemark(Location loc, const Twine &message);
 /// the diagnostic arguments directly instead of relying on the returned
 /// InFlightDiagnostic.
 template <typename... Args>
-LogicalResult emitOptionalError(Optional<Location> loc, Args &&...args) {
+LogicalResult emitOptionalError(std::optional<Location> loc, Args &&...args) {
   if (loc)
     return emitError(*loc).append(std::forward<Args>(args)...);
   return failure();
 }
 template <typename... Args>
-LogicalResult emitOptionalWarning(Optional<Location> loc, Args &&...args) {
+LogicalResult emitOptionalWarning(std::optional<Location> loc, Args &&...args) {
   if (loc)
     return emitWarning(*loc).append(std::forward<Args>(args)...);
   return failure();
 }
 template <typename... Args>
-LogicalResult emitOptionalRemark(Optional<Location> loc, Args &&...args) {
+LogicalResult emitOptionalRemark(std::optional<Location> loc, Args &&...args) {
   if (loc)
     return emitRemark(*loc).append(std::forward<Args>(args)...);
   return failure();
@@ -595,7 +602,7 @@ private:
 
   /// Given a location, returns the first nested location (including 'loc') that
   /// can be shown to the user.
-  Optional<Location> findLocToShow(Location loc);
+  std::optional<Location> findLocToShow(Location loc);
 
   /// The maximum depth that a call stack will be printed.
   /// TODO: This should be a tunable flag.

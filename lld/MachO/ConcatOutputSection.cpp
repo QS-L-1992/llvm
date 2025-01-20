@@ -126,16 +126,26 @@ bool TextOutputSection::needsThunks() const {
     return false;
   uint64_t isecAddr = addr;
   for (ConcatInputSection *isec : inputs)
-    isecAddr = alignTo(isecAddr, isec->align) + isec->getSize();
-  if (isecAddr - addr + in.stubs->getSize() <=
-      std::min(target->backwardBranchRange, target->forwardBranchRange))
+    isecAddr = alignToPowerOf2(isecAddr, isec->align) + isec->getSize();
+  // Other sections besides __text might be small enough to pass this
+  // test but nevertheless need thunks for calling into other sections.
+  // An imperfect heuristic to use in this case is that if a section
+  // we've already processed in this segment needs thunks, so do the
+  // rest.
+  bool needsThunks = parent && parent->needsThunks;
+  if (!needsThunks &&
+      isecAddr - addr + in.stubs->getSize() <=
+          std::min(target->backwardBranchRange, target->forwardBranchRange))
     return false;
   // Yes, this program is large enough to need thunks.
+  if (parent) {
+    parent->needsThunks = true;
+  }
   for (ConcatInputSection *isec : inputs) {
     for (Reloc &r : isec->relocs) {
       if (!target->hasAttr(r.type, RelocAttrBits::BRANCH))
         continue;
-      auto *sym = r.referent.get<Symbol *>();
+      auto *sym = cast<Symbol *>(r.referent);
       // Pre-populate the thunkMap and memoize call site counts for every
       // InputSection and ThunkInfo. We do this for the benefit of
       // estimateStubsInRangeVA().
@@ -172,7 +182,7 @@ uint64_t TextOutputSection::estimateStubsInRangeVA(size_t callIdx) const {
   uint64_t isecEnd = isecVA;
   for (size_t i = callIdx; i < inputs.size(); i++) {
     InputSection *isec = inputs[i];
-    isecEnd = alignTo(isecEnd, isec->align) + isec->getSize();
+    isecEnd = alignToPowerOf2(isecEnd, isec->align) + isec->getSize();
   }
   // Estimate the address after which call sites can safely call stubs
   // directly rather than through intermediary thunks.
@@ -194,8 +204,8 @@ uint64_t TextOutputSection::estimateStubsInRangeVA(size_t callIdx) const {
 }
 
 void ConcatOutputSection::finalizeOne(ConcatInputSection *isec) {
-  size = alignTo(size, isec->align);
-  fileSize = alignTo(fileSize, isec->align);
+  size = alignToPowerOf2(size, isec->align);
+  fileSize = alignToPowerOf2(fileSize, isec->align);
   isec->outSecOff = size;
   isec->isFinal = true;
   size += isec->getSize();
@@ -246,10 +256,15 @@ void TextOutputSection::finalize() {
     // contains several branch instructions in succession, then the distance
     // from the current position to the position where the thunks are inserted
     // grows. So leave room for a bunch of thunks.
-    unsigned slop = 1024 * thunkSize;
-    while (finalIdx < endIdx && addr + size + inputs[finalIdx]->getSize() <
-                                    isecVA + forwardBranchRange - slop)
+    unsigned slop = 256 * thunkSize;
+    while (finalIdx < endIdx) {
+      uint64_t expectedNewSize =
+          alignToPowerOf2(addr + size, inputs[finalIdx]->align) +
+          inputs[finalIdx]->getSize();
+      if (expectedNewSize >= isecVA + forwardBranchRange - slop)
+        break;
       finalizeOne(inputs[finalIdx++]);
+    }
 
     if (!isec->hasCallSites)
       continue;
@@ -282,7 +297,7 @@ void TextOutputSection::finalize() {
           backwardBranchRange < callVA ? callVA - backwardBranchRange : 0;
       uint64_t highVA = callVA + forwardBranchRange;
       // Calculate our call referent address
-      auto *funcSym = r.referent.get<Symbol *>();
+      auto *funcSym = cast<Symbol *>(r.referent);
       ThunkInfo &thunkInfo = thunkMap[funcSym];
       // The referent is not reachable, so we need to use a thunk ...
       if (funcSym->isInStubs() && callVA >= stubsInRangeVA) {
@@ -318,11 +333,7 @@ void TextOutputSection::finalize() {
       thunkInfo.isec =
           makeSyntheticInputSection(isec->getSegName(), isec->getName());
       thunkInfo.isec->parent = this;
-
-      // This code runs after dead code removal. Need to set the `live` bit
-      // on the thunk isec so that asserts that check that only live sections
-      // get written are happy.
-      thunkInfo.isec->live = true;
+      assert(thunkInfo.isec->live);
 
       StringRef thunkName = saver().save(funcSym->getName() + ".thunk." +
                                          std::to_string(thunkInfo.sequence++));
@@ -330,15 +341,14 @@ void TextOutputSection::finalize() {
         r.referent = thunkInfo.sym = symtab->addDefined(
             thunkName, /*file=*/nullptr, thunkInfo.isec, /*value=*/0, thunkSize,
             /*isWeakDef=*/false, /*isPrivateExtern=*/true,
-            /*isThumb=*/false, /*isReferencedDynamically=*/false,
-            /*noDeadStrip=*/false, /*isWeakDefCanBeHidden=*/false);
+            /*isReferencedDynamically=*/false, /*noDeadStrip=*/false,
+            /*isWeakDefCanBeHidden=*/false);
       } else {
         r.referent = thunkInfo.sym = make<Defined>(
             thunkName, /*file=*/nullptr, thunkInfo.isec, /*value=*/0, thunkSize,
             /*isWeakDef=*/false, /*isExternal=*/false, /*isPrivateExtern=*/true,
-            /*includeInSymtab=*/true, /*isThumb=*/false,
-            /*isReferencedDynamically=*/false, /*noDeadStrip=*/false,
-            /*isWeakDefCanBeHidden=*/false);
+            /*includeInSymtab=*/true, /*isReferencedDynamically=*/false,
+            /*noDeadStrip=*/false, /*isWeakDefCanBeHidden=*/false);
       }
       thunkInfo.sym->used = true;
       target->populateThunk(thunkInfo.isec, funcSym);

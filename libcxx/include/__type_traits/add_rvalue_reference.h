@@ -27,11 +27,11 @@ using __add_rvalue_reference_t = __add_rvalue_reference(_Tp);
 
 template <class _Tp, bool = __libcpp_is_referenceable<_Tp>::value>
 struct __add_rvalue_reference_impl {
-  typedef _LIBCPP_NODEBUG _Tp type;
+  using type _LIBCPP_NODEBUG = _Tp;
 };
 template <class _Tp >
 struct __add_rvalue_reference_impl<_Tp, true> {
-  typedef _LIBCPP_NODEBUG _Tp&& type;
+  using type _LIBCPP_NODEBUG = _Tp&&;
 };
 
 template <class _Tp>
@@ -44,7 +44,7 @@ struct add_rvalue_reference {
   using type = __add_rvalue_reference_t<_Tp>;
 };
 
-#if _LIBCPP_STD_VER > 11
+#if _LIBCPP_STD_VER >= 14
 template <class _Tp>
 using add_rvalue_reference_t = __add_rvalue_reference_t<_Tp>;
 #endif

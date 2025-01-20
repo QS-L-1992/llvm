@@ -13,6 +13,7 @@
 #ifndef LLVM_LIB_TABLEGEN_TGLEXER_H
 #define LLVM_LIB_TABLEGEN_TGLEXER_H
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/DataTypes.h"
@@ -21,7 +22,6 @@
 #include <memory>
 #include <set>
 #include <string>
-#include <vector>
 
 namespace llvm {
 template <typename T> class ArrayRef;
@@ -29,53 +29,161 @@ class SourceMgr;
 class Twine;
 
 namespace tgtok {
-  enum TokKind {
-    // Markers
-    Eof, Error,
+enum TokKind {
+  // Markers
+  Eof,
+  Error,
 
-    // Tokens with no info.
-    minus, plus,        // - +
-    l_square, r_square, // [ ]
-    l_brace, r_brace,   // { }
-    l_paren, r_paren,   // ( )
-    less, greater,      // < >
-    colon, semi,        // : ;
-    comma, dot,         // , .
-    equal, question,    // = ?
-    paste,              // #
-    dotdotdot,          // ...
+  // Tokens with no info.
+  minus,     // -
+  plus,      // +
+  l_square,  // [
+  r_square,  // ]
+  l_brace,   // {
+  r_brace,   // }
+  l_paren,   // (
+  r_paren,   // )
+  less,      // <
+  greater,   // >
+  colon,     // :
+  semi,      // ;
+  comma,     // ,
+  dot,       // .
+  equal,     // =
+  question,  // ?
+  paste,     // #
+  dotdotdot, // ...
 
-    // Reserved keywords. ('ElseKW' is named to distinguish it from the
-    // existing 'Else' that means the preprocessor #else.)
-    Assert, Bit, Bits, Class, Code, Dag, Def, Defm, Defset, Defvar, ElseKW,
-    FalseKW, Field, Foreach, If, In, Include, Int, Let, List, MultiClass,
-    String, Then, TrueKW,
+  // Boolean literals.
+  TrueVal,
+  FalseVal,
 
-    // Bang operators.
-    XConcat, XADD, XSUB, XMUL, XDIV, XNOT, XLOG2, XAND, XOR, XXOR, XSRA, XSRL,
-    XSHL, XListConcat, XListSplat, XStrConcat, XInterleave, XSubstr, XFind,
-    XCast, XSubst, XForEach, XFilter, XFoldl, XHead, XTail, XSize, XEmpty, XIf,
-    XCond, XEq, XIsA, XDag, XNe, XLe, XLt, XGe, XGt, XSetDagOp, XGetDagOp,
-    XExists,
+  // Integer value.
+  IntVal,
 
-    // Boolean literals.
-    TrueVal, FalseVal,
+  // Binary constant.  Note that these are sized according to the number of
+  // bits given.
+  BinaryIntVal,
 
-    // Integer value.
-    IntVal,
+  // Preprocessing tokens for internal usage by the lexer.
+  // They are never returned as a result of Lex().
+  Ifdef,
+  Ifndef,
+  Else,
+  Endif,
+  Define,
 
-    // Binary constant.  Note that these are sized according to the number of
-    // bits given.
-    BinaryIntVal,
+  // Reserved keywords. ('ElseKW' is named to distinguish it from the
+  // existing 'Else' that means the preprocessor #else.)
+  Bit,
+  Bits,
+  Code,
+  Dag,
+  ElseKW,
+  Field,
+  In,
+  Include,
+  Int,
+  List,
+  String,
+  Then,
 
-    // String valued tokens.
-    Id, StrVal, VarName, CodeFragment,
+  // Object start tokens.
+  OBJECT_START_FIRST,
+  Assert = OBJECT_START_FIRST,
+  Class,
+  Def,
+  Defm,
+  Defset,
+  Deftype,
+  Defvar,
+  Dump,
+  Foreach,
+  If,
+  Let,
+  MultiClass,
+  OBJECT_START_LAST = MultiClass,
 
-    // Preprocessing tokens for internal usage by the lexer.
-    // They are never returned as a result of Lex().
-    Ifdef, Ifndef, Else, Endif, Define
-  };
+  // Bang operators.
+  BANG_OPERATOR_FIRST,
+  XConcat = BANG_OPERATOR_FIRST,
+  XADD,
+  XSUB,
+  XMUL,
+  XDIV,
+  XNOT,
+  XLOG2,
+  XAND,
+  XOR,
+  XXOR,
+  XSRA,
+  XSRL,
+  XSHL,
+  XListConcat,
+  XListFlatten,
+  XListSplat,
+  XStrConcat,
+  XInterleave,
+  XSubstr,
+  XFind,
+  XCast,
+  XSubst,
+  XForEach,
+  XFilter,
+  XFoldl,
+  XHead,
+  XTail,
+  XSize,
+  XEmpty,
+  XInitialized,
+  XIf,
+  XCond,
+  XEq,
+  XIsA,
+  XDag,
+  XNe,
+  XLe,
+  XLt,
+  XGe,
+  XGt,
+  XSetDagOp,
+  XGetDagOp,
+  XExists,
+  XListRemove,
+  XToLower,
+  XToUpper,
+  XRange,
+  XGetDagArg,
+  XGetDagName,
+  XSetDagArg,
+  XSetDagName,
+  XRepr,
+  BANG_OPERATOR_LAST = XRepr,
+
+  // String valued tokens.
+  STRING_VALUE_FIRST,
+  Id = STRING_VALUE_FIRST,
+  StrVal,
+  VarName,
+  CodeFragment,
+  STRING_VALUE_LAST = CodeFragment,
+};
+
+/// isBangOperator - Return true if this is a bang operator.
+static inline bool isBangOperator(tgtok::TokKind Kind) {
+  return tgtok::BANG_OPERATOR_FIRST <= Kind && Kind <= BANG_OPERATOR_LAST;
 }
+
+/// isObjectStart - Return true if this is a valid first token for a statement.
+static inline bool isObjectStart(tgtok::TokKind Kind) {
+  return tgtok::OBJECT_START_FIRST <= Kind && Kind <= OBJECT_START_LAST;
+}
+
+/// isStringValue - Return true if this is a string value.
+static inline bool isStringValue(tgtok::TokKind Kind) {
+  return tgtok::STRING_VALUE_FIRST <= Kind && Kind <= STRING_VALUE_LAST;
+}
+} // namespace tgtok
 
 /// TGLexer - TableGen Lexer class.
 class TGLexer {
@@ -115,8 +223,7 @@ public:
   tgtok::TokKind getCode() const { return CurCode; }
 
   const std::string &getCurStrVal() const {
-    assert((CurCode == tgtok::Id || CurCode == tgtok::StrVal ||
-            CurCode == tgtok::VarName || CurCode == tgtok::CodeFragment) &&
+    assert(tgtok::isStringValue(CurCode) &&
            "This token doesn't have a string value");
     return CurStrVal;
   }
@@ -216,8 +323,7 @@ private:
   // preprocessing control stacks for the current file and all its
   // parent files.  The back() element is the preprocessing control
   // stack for the current file.
-  std::vector<std::unique_ptr<std::vector<PreprocessorControlDesc>>>
-      PrepIncludeStack;
+  SmallVector<SmallVector<PreprocessorControlDesc>> PrepIncludeStack;
 
   // Validate that the current preprocessing control stack is empty,
   // since we are about to exit a file, and pop the include stack.
@@ -359,11 +465,6 @@ private:
   // symbol, buffer end or non-whitespace symbol following the preprocesing
   // directive.
   bool prepSkipDirectiveEnd();
-
-  // Skip all symbols to the end of the line/file.
-  // The method adjusts CurPtr, so that it points to either new line
-  // symbol in the current line or the buffer end.
-  void prepSkipToLineEnd();
 
   // Return true, if the current preprocessor control stack is such that
   // we should allow lexer to process the next token, false - otherwise.

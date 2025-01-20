@@ -12,14 +12,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Support/Threading.h"
-#include "llvm/ADT/Optional.h"
 #include "llvm/Config/config.h"
 #include "llvm/Config/llvm-config.h"
 
 #include <cassert>
-#include <errno.h>
+#include <optional>
 #include <stdlib.h>
-#include <string.h>
 
 using namespace llvm;
 
@@ -82,9 +80,14 @@ unsigned llvm::ThreadPoolStrategy::compute_thread_count() const {
   // which is not enough for some/many normal LLVM compilations. This implements
   // the same interface as std::thread but requests the same stack size as the
   // main thread (8MB) before creation.
-const llvm::Optional<unsigned> llvm::thread::DefaultStackSize = 8 * 1024 * 1024;
+const std::optional<unsigned> llvm::thread::DefaultStackSize = 8 * 1024 * 1024;
+#elif defined(_AIX)
+  // On AIX, the default pthread stack size limit is ~192k for 64-bit programs.
+  // This limit is easily reached when doing link-time thinLTO. AIX library
+  // developers have used 4MB, so we'll do the same.
+const std::optional<unsigned> llvm::thread::DefaultStackSize = 4 * 1024 * 1024;
 #else
-const llvm::Optional<unsigned> llvm::thread::DefaultStackSize;
+const std::optional<unsigned> llvm::thread::DefaultStackSize;
 #endif
 
 

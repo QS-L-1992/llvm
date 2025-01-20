@@ -1,6 +1,6 @@
-; RUN: opt -lower-expect  -S -o - < %s | FileCheck %s
+; RUN: opt -passes=lower-expect  -S -o - < %s | FileCheck %s
 ; RUN: opt -S -passes='function(lower-expect)' < %s | FileCheck %s
-; 
+;
 ; if (__builtin_expect((x > goo() || y > hoo()), 1)) {
 ;  ..
 ; }
@@ -90,14 +90,14 @@ bb23:                                             ; preds = %bb21, %bb19
   ret void
 }
 
-declare i32 @goo() 
-declare i32 @hoo() 
-declare i64 @llvm.expect.i64(i64, i64) 
+declare i32 @goo()
+declare i32 @hoo()
+declare i64 @llvm.expect.i64(i64, i64)
 
 
 !llvm.ident = !{!0}
 
 
 !0 = !{!"clang version 5.0.0 (trunk 302965)"}
-; CHECK: [[WEIGHT]] = !{!"branch_weights", i32 2000, i32 1}
-; CHECK: [[WEIGHT2]] = !{!"branch_weights", i32 1, i32 2000}
+; CHECK: [[WEIGHT]] = !{!"branch_weights", !"expected", i32 2000, i32 1}
+; CHECK: [[WEIGHT2]] = !{!"branch_weights", !"expected", i32 1, i32 2000}
